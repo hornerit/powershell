@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-Extracts InfoPath XML files and attachments embedded within those files to local folders from a SharePoint library.
+From a SharePoint server, extracts InfoPath XML files and attachments embedded within those files to local folders from a SharePoint library.
 
 .DESCRIPTION
-Attempts to find all XML files inside of a SharePoint library specified, downloads the raw XML files locally unless they already exist locally, and reads through each one for any fields that have another file attachment embedded and will extract all of them into organized folders
+From a SharePoint server, attempts to find all XML files inside of a SharePoint library specified, downloads the raw XML files locally unless they already exist locally, and reads through each one for any fields that have another file attachment embedded and will extract all of them into organized folders
 
 .PARAMETER SiteURL
 REQUIRED URL to the SharePoint site where the library exists
@@ -20,7 +20,7 @@ OPTIONAL If you have previously run this script for the library or already have 
 
 .NOTES
   Created by: Brendan Horner (www.hornerit.com)
-  Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
+  Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run. MUST BE RUN ON SHAREPOINT SERVER WITH SHAREPOINT SNAP-IN
   Credit: The following urls helped me compile enough to create this
   --https://sharepoint.stackexchange.com/questions/222076/reading-and-writing-xml-in-form-library-with-powershell
   --http://chrissyblanco.blogspot.ie/2006/07/infopath-2007-file-attachment-control.html
