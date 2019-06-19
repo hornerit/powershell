@@ -29,6 +29,7 @@ OPTIONAL Number of Mailboxes to process per powershell window generated. Default
   Created by: Brendan Horner (www.hornerit.com)
   Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
   Version History:
+  --2019-06-19-Altered MFA parameter to be NoMFA so someone can force basic auth by setting that switch and adjusted MFA module to pull the latest version of the module on your machine
   --2019-05-28-Bug Fixes for MFA and errors in mailbox
   --2019-05-22-Added support for Exchange Online MFA Module
   --2019-05-21-Completed documentation and separate version of script that has a GUI, see other post for that version (https://www.hornerit.com/2019/05/o365-spam-remover-script-now-with-gui.html).
@@ -60,30 +61,31 @@ $WindowsPerCred = 3,
 [int]
 $MailboxesPerWindow = 500,
 [switch]
-$MFA
+$NoMFA
 )
- 
-#Try to get the Exchange Online Powershell module that supports MFA
-try{
-    $getChildItemSplat = @{
-        Path = "$Env:LOCALAPPDATA\Apps\2.0\*\CreateExoPSSession.ps1"
-        Recurse = $true
-        ErrorAction = 'Stop'
-        Verbose = $false
+
+if(!($NoMFA)){
+    #Try to get the Exchange Online Powershell module that supports MFA
+    try{
+        $getChildItemSplat = @{
+            Path = "$Env:LOCALAPPDATA\Apps\2.0\*\CreateExoPSSession.ps1"
+            Recurse = $true
+            ErrorAction = 'Stop'
+            Verbose = $false
+        }
+        $MFAExchangeModule = ((Get-ChildItem @getChildItemSplat | Select-Object -ExpandProperty Target -First 1).Replace("CreateExoPSSession.ps1", ""))
+        . "$MFAExchangeModule\CreateExoPSSession.ps1" 3>$null
+        Write-Host "MFA Module found and imported"
+    } catch {
+        $NoMFA = $true
+        Write-Host "MFA Module not found. If legacy auth is disabled for your tenant, this script will most likely fail. To install the latest module, go to https://aka.ms/exopspreview"
     }
-    $MFAExchangeModule = ((Get-ChildItem @getChildItemSplat | Select-Object -ExpandProperty Target -First 1).Replace("CreateExoPSSession.ps1", ""))
-    . "$MFAExchangeModule\CreateExoPSSession.ps1" 3>$null
-    $MFA = $true
-    Write-Host "MFA Module found and imported"
-} catch {
-    $MFA = $false
-    Write-Host "MFA Module not found. If legacy auth is disabled for your tenant, this script will most likely fail. To install the latest module, go to https://aka.ms/exopspreview"
 }
  
 #If supplied, create the Credential object used to log into O365 session. If we are using MFA, the credential token cache should hopefully still be working so just connecting without creds will work
 if($null -ne $CredU -and $CredU.Length -gt 0){
     write-host "Username supplied, attempting to connect to O365"
-    if($MFA){
+    if(!($NoMFA)){
         Get-PSSession | Remove-PSSession
         Connect-EXOPSSession -UserPrincipalName $CredU 3>$null
         $Session = Get-PSSession
@@ -99,7 +101,7 @@ if($null -ne $CredU -and $CredU.Length -gt 0){
             $Session = New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri https://outlook.office365.com/powershell-liveid -Authentication Basic -AllowRedirection -Credential $Cred -ErrorAction Stop
         } catch {
             Write-Host "Unable to establish a connection to O365. You will need to re-run the script using this command to simply try again or you can change something:"
-            Write-Host "$($MyInvocation.MyCommand.Definition) -CredU $CredU -CredP $CredP -SearchQuery `"$SearchQuery`" -Recipients $Recipients -MFA $MFA"
+            Write-Host "$($MyInvocation.MyCommand.Definition) -CredU $CredU -CredP $CredP -SearchQuery `"$SearchQuery`" -Recipients $Recipients -MFA:$NoMFA"
             do{
                 $ReadyToClose = Read-Host "Press 'Y' key to close this script (make sure you copy the above command to paste and run in another powershell window to try again without running the whole giant script again)"
             } until ($ReadyToClose -eq "y")
@@ -144,7 +146,7 @@ if($SearchQuery.Length -eq 0){
         }
         if($CredEntry.Length -gt 0){
             if($CredEntry -match "^.+@.+\..+$" -and $null -eq ($Creds.Username | Where-Object { $_ -eq $CredEntry })){
-                if($MFA){
+                if(!($NoMFA)){
                     Connect-EXOPSSession -UserPrincipalName $CredEntry 3>$null
                     $TestPSSession = Get-PSSession
                 } else {
@@ -155,7 +157,7 @@ if($SearchQuery.Length -eq 0){
                 try {
                     Invoke-Command -Session $TestPSSession -ScriptBlock { Get-OrganizationConfig | Select-Object Name } -ErrorAction Stop
                     Remove-PSSession $TestPSSession
-                    if($MFA){
+                    if(!($NoMFA)){
                         $Creds.Add((New-Object PSCredential($CredEntry,(ConvertTo-SecureString " " -AsPlainText -Force)))) | Out-Null
                     } else {
                         $Creds.Add($CredEntry) | Out-Null
@@ -265,7 +267,7 @@ if($Recipients.length -eq 0){
     $SearchEndDateStr = $SearchEndDate.ToString()
     Write-Host "Connecting to Exchange Online..."
     try {
-        if($MFA){
+        if(!($NoMFA)){
             Connect-EXOPSSession -UserPrincipalName ($Creds[0].UserName) 3>$null
             $Session = Get-PSSession
         } else {
@@ -363,7 +365,7 @@ if($Recipients.length -eq 0){
                         $Recipients = $Mailboxes[($min)..($max)] -join ","
                         #This is the freaking magic that opens another powershell window and supplies all the values that are set as parameters up at the top of this script
                         #!!!NOTICE THE BACKTICK CHARACTERS FOR FILE AT BEGINNING AND SEARCH QUERY AT THE END! IF YOU TAKE THEM AWAY, THE SEARCH QUERY FOR THESE SPAWNED PROCESSES IS INCOMPLETE AND DELETES LOTS MORE EMAILS!!!
-                        Start-Process powershell -Passthru -ArgumentList "-file `"$ScriptPath`" -Recipients $Recipients -CredU $u -CredP $p -SearchQuery `"$SearchQuery`" -MFA $MFA"
+                        Start-Process powershell -Passthru -ArgumentList "-file `"$ScriptPath`" -Recipients $Recipients -CredU $u -CredP $p -SearchQuery `"$SearchQuery`" -MFA:$NoMFA"
                     }
                     $RoundMinimum+=$MailboxesPerWindow
                 }
@@ -398,7 +400,7 @@ if($Recipients.length -eq 0){
                 }
                 if($Session.State -ne "Opened"){
                     Get-PSSession | Remove-PSSession
-                    if($MFA){
+                    if(!($NoMFA)){
                         Connect-EXOPSSession -UserPrincipalName $CredU 3>$null
                         $Session = Get-PSSession
                     } else {
