@@ -31,7 +31,7 @@ OPTIONAL Number of Mailboxes to process per powershell window generated. Default
   Created by: Brendan Horner (www.hornerit.com)
   Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
   Version History:
-  --2019-06-19-Altered MFA parameter to be NoMFA so someone can force basic auth by setting that switch and adjusted MFA module to pull the latest version of the module on your machine
+  --2019-06-19-Altered MFA parameter to be NoMFA so someone can force basic auth by setting that switch and adjusted MFA module to pull the latest version of the module on your machine. Bug fix from anonymous commenter.
   --2019-05-28-Bug fixes for MFA and mailbox errors
   --2019-05-21-Added Exchange Admin prompt to gui
   --2019-05-16-Added GUI, fixed a few minor display bugs and performance bugs, rewrote sections for dynamic window generation based on params, allows as many Exch Admin accts to assist as you can try...watch out for RAM usage
@@ -637,7 +637,7 @@ if($SearchQuery.Length -eq 0){
                 }
             } until ($SendersGood -eq 1)
         } until ($BadSender.length -eq 0)
-        $Senders = $Senders.keys -join ","
+        $Senders = $SendersHash.keys -join ","
 
         #Get the start date and time of the range when that users should have received the spam
         $StartDate = read-host "[Required]Start Date AND TIME for range when users received message (e.g. 7/18/2018 12:20 AM)"
