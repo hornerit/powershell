@@ -187,7 +187,7 @@ if($SearchQuery.Length -eq 0){
             }
         } until ($SendersGood -eq 1)
     } until ($BadSender.length -eq 0)
-    $Senders = $Senders.keys -join ","
+    $Senders = $SendersHash.keys -join ","
  
     #Get the start date and time of the range when that users should have received the spam
     $StartDate = read-host "[Required]Start Date AND TIME for range when users received message (e.g. 7/18/2018 12:20 AM)"
