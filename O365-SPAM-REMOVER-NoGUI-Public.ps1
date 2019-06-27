@@ -29,6 +29,7 @@ OPTIONAL Number of Mailboxes to process per powershell window generated. Default
   Created by: Brendan Horner (www.hornerit.com)
   Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
   Version History:
+  --2019-06-27-Fixed bug for child windows due to changing MFA parameter to NoMFA
   --2019-06-19-Altered MFA parameter to be NoMFA so someone can force basic auth by setting that switch and adjusted MFA module to pull the latest version of the module on your machine
   --2019-05-28-Bug Fixes for MFA and errors in mailbox
   --2019-05-22-Added support for Exchange Online MFA Module
@@ -365,7 +366,7 @@ if($Recipients.length -eq 0){
                         $Recipients = $Mailboxes[($min)..($max)] -join ","
                         #This is the freaking magic that opens another powershell window and supplies all the values that are set as parameters up at the top of this script
                         #!!!NOTICE THE BACKTICK CHARACTERS FOR FILE AT BEGINNING AND SEARCH QUERY AT THE END! IF YOU TAKE THEM AWAY, THE SEARCH QUERY FOR THESE SPAWNED PROCESSES IS INCOMPLETE AND DELETES LOTS MORE EMAILS!!!
-                        Start-Process powershell -Passthru -ArgumentList "-file `"$ScriptPath`" -Recipients $Recipients -CredU $u -CredP $p -SearchQuery `"$SearchQuery`" -MFA:$NoMFA"
+                        Start-Process powershell -Passthru -ArgumentList "-file `"$ScriptPath`" -Recipients $Recipients -CredU $u -CredP $p -SearchQuery `"$SearchQuery`" -NoMFA:$NoMFA"
                     }
                     $RoundMinimum+=$MailboxesPerWindow
                 }
