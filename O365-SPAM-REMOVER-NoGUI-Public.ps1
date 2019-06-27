@@ -74,7 +74,7 @@ if(!($NoMFA)){
             ErrorAction = 'Stop'
             Verbose = $false
         }
-        $MFAExchangeModule = ((Get-ChildItem @getChildItemSplat | Sort-Object LastWriteTime -Descending | Select-Object -ExpandProperty Target -First 1).Replace("CreateExoPSSession.ps1", ""))
+        $MFAExchangeModule = ((Get-ChildItem @getChildItemSplat | Sort-Object LastWriteTime -Descending | where-object {(Test-Path "$($_.PSParentPath)\Microsoft.Exchange.Management.ExoPowershellModule.dll") -eq $true} | Select-Object -First 1 | Select-Object -ExpandProperty fullname).Replace("\CreateExoPSSession.ps1", ""))
         . "$MFAExchangeModule\CreateExoPSSession.ps1" 3>$null
         Write-Host "MFA Module found and imported"
     } catch {
