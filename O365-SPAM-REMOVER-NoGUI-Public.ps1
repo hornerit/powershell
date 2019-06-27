@@ -29,7 +29,7 @@ OPTIONAL Number of Mailboxes to process per powershell window generated. Default
   Created by: Brendan Horner (www.hornerit.com)
   Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
   Version History:
-  --2019-06-27-Fixed bug for child windows due to changing MFA parameter to NoMFA
+  --2019-06-27-Fixed bug for child windows due to changing MFA parameter to NoMFA and updated MFA Exchange Module to use the latest version
   --2019-06-19-Altered MFA parameter to be NoMFA so someone can force basic auth by setting that switch and adjusted MFA module to pull the latest version of the module on your machine
   --2019-05-28-Bug Fixes for MFA and errors in mailbox
   --2019-05-22-Added support for Exchange Online MFA Module
@@ -74,7 +74,7 @@ if(!($NoMFA)){
             ErrorAction = 'Stop'
             Verbose = $false
         }
-        $MFAExchangeModule = ((Get-ChildItem @getChildItemSplat | Select-Object -ExpandProperty Target -First 1).Replace("CreateExoPSSession.ps1", ""))
+        $MFAExchangeModule = ((Get-ChildItem @getChildItemSplat | Sort-Object LastWriteTime -Descending | Select-Object -ExpandProperty Target -First 1).Replace("CreateExoPSSession.ps1", ""))
         . "$MFAExchangeModule\CreateExoPSSession.ps1" 3>$null
         Write-Host "MFA Module found and imported"
     } catch {
