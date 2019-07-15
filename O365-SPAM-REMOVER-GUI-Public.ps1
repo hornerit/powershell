@@ -43,6 +43,7 @@ OPTIONAL Number of Mailboxes to process per powershell window generated. Default
 .\O365-SPAM-REMOVER.ps1 -NoMFA
 .\O365-SPAM-REMOVER.ps1 -Recipients "someone@CONTOSO.COM,someoneelse@CONTOSO.COM" -SearchQuery "FROM:bob@something.com AND Received:04/19/2018"
 #>
+[CmdletBinding()]
 param(
 [string]
 $StartDate,
@@ -547,7 +548,7 @@ if($SearchQuery.Length -eq 0){
                 Creds = $Creds
             }
         }
-        $GUIData = Get-GUIData -NoMFA $NoMFA
+        $GUIData = Get-GUIData -NoMFA:$NoMFA
         if($GUIData.GUIGood){
             #Set Creds to collection of creds captured
             $Creds = $GUIData.Creds
