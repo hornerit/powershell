@@ -366,7 +366,11 @@ if($Recipients.length -eq 0){
                         $Recipients = $Mailboxes[($min)..($max)] -join ","
                         #This is the freaking magic that opens another powershell window and supplies all the values that are set as parameters up at the top of this script
                         #!!!NOTICE THE BACKTICK CHARACTERS FOR FILE AT BEGINNING AND SEARCH QUERY AT THE END! IF YOU TAKE THEM AWAY, THE SEARCH QUERY FOR THESE SPAWNED PROCESSES IS INCOMPLETE AND DELETES LOTS MORE EMAILS!!!
-                        Start-Process powershell -Passthru -ArgumentList "-file `"$ScriptPath`" -Recipients $Recipients -CredU $u -CredP $p -SearchQuery `"$SearchQuery`" -NoMFA:$NoMFA"
+                        if(!($NoMFA)){
+                            Start-Process powershell -Passthru -ArgumentList "-file `"$ScriptPath`" -Recipients $Recipients -CredU $u -CredP $p -SearchQuery `"$SearchQuery`""
+                        } else {
+                            Start-Process powershell -Passthru -ArgumentList "-file `"$ScriptPath`" -Recipients $Recipients -CredU $u -CredP $p -SearchQuery `"$SearchQuery`" -NoMFA"
+                        }
                     }
                     $RoundMinimum+=$MailboxesPerWindow
                 }
