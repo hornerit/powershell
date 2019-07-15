@@ -153,6 +153,7 @@ if($SearchQuery.Length -eq 0){
     }
     if($GUI -and !($NoGUI)){
         function Get-GUIData{
+            [CmdletBinding()]
             param(
                 [switch]
                 $NoMFA
