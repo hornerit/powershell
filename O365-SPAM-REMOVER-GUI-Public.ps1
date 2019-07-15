@@ -178,7 +178,7 @@ if($SearchQuery.Length -eq 0){
                 <Window
                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                x:Name="Window" Title="SPAM Removal Script GUI" WindowStartupLocation="CenterScreen" Width="550" Height="750" ShowInTaskbar="True" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                x:Name="Window" Title="SPAM Removal Script GUI" WindowStartupLocation="CenterScreen" Width="550" Height="775" ShowInTaskbar="True" ScrollViewer.VerticalScrollBarVisibility="Auto">
                     <Window.Resources>
                         <Style x:Key="ButtonRoundedCorners" TargetType="Button">
                             <Setter Property="Template">
@@ -253,6 +253,11 @@ if($SearchQuery.Length -eq 0){
                             </StackPanel>
                         </StackPanel>
                         <Separator Margin="0,10"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10,0,0,0">
+                            <Button x:Name="btn24h" Content="Last 24h" Margin="0,0,10,0"/>
+                            <Button x:Name="btn48h" Content="Last 48h" Margin="0,0,10,0"/>
+                            <Button x:Name="btn72h" Content="Last 72h"/>
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <StackPanel Orientation="Vertical" HorizontalAlignment="Left" VerticalAlignment="Bottom">
                                 <Label Margin="0,0,0,-10">[Required]</Label>
@@ -323,6 +328,9 @@ if($SearchQuery.Length -eq 0){
             $ListboxEvilSenders = $Window.FindName('listboxEvilSenders')
             $BtnAddEvilSender = $Window.FindName('btnAddEvilSender')
             $BtnRemoveEvilSender = $Window.FindName('btnRemoveEvilSender')
+            $Btn24h = $Window.FindName('btn24h')
+            $Btn48h = $Window.FindName('btn48h')
+            $Btn72h = $Window.FindName('btn72h')
             $InputStartDate = $Window.FindName('InputStartDate')
             $HourDropdownStart = $Window.FindName('cbStartHour')
             $AmPmDropdownStart = $Window.FindName('cbStartAMPM')
@@ -526,6 +534,66 @@ if($SearchQuery.Length -eq 0){
                 Resolve-DateInputs
                 Resolve-RequiredInputs
             })
+            $Btn24h.Add_Click({
+                $StartDateTime = (Get-Date).AddHours(-24)
+                $EndDateTime = (Get-Date).AddHours(1)
+                if($StartDateTime.Hour -gt 12){
+                    $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 13
+                    $AmPmDropdownStart.SelectedIndex = 1
+                } else {
+                    $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 1
+                    $AmPmDropdownStart.SelectedIndex = 0
+                }
+                if($EndDateTime.Hour -gt 12){
+                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 13
+                    $AmPmDropdownEnd.SelectedIndex = 0
+                } else {
+                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour
+                    $AmPmDropdownEnd.SelectedIndex = 1
+                }
+                $InputStartDate.SelectedDate = $StartDateTime
+                $InputEndDate.SelectedDate = $EndDateTime
+            })
+            $Btn48h.Add_Click({
+                $StartDateTime = (Get-Date).AddHours(-24)
+                $EndDateTime = (Get-Date).AddHours(1)
+                if($StartDateTime.Hour -gt 12){
+                    $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 13
+                    $AmPmDropdownStart.SelectedIndex = 1
+                } else {
+                    $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 1
+                    $AmPmDropdownStart.SelectedIndex = 0
+                }
+                if($EndDateTime.Hour -gt 12){
+                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 13
+                    $AmPmDropdownEnd.SelectedIndex = 0
+                } else {
+                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour
+                    $AmPmDropdownEnd.SelectedIndex = 1
+                }
+                $InputStartDate.SelectedDate = $StartDateTime
+                $InputEndDate.SelectedDate = $EndDateTime
+            })
+            $Btn72h.Add_Click({
+                $StartDateTime = (Get-Date).AddHours(-24)
+                $EndDateTime = (Get-Date).AddHours(1)
+                if($StartDateTime.Hour -gt 12){
+                    $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 13
+                    $AmPmDropdownStart.SelectedIndex = 1
+                } else {
+                    $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 1
+                    $AmPmDropdownStart.SelectedIndex = 0
+                }
+                if($EndDateTime.Hour -gt 12){
+                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 13
+                    $AmPmDropdownEnd.SelectedIndex = 0
+                } else {
+                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour
+                    $AmPmDropdownEnd.SelectedIndex = 1
+                }
+                $InputStartDate.SelectedDate = $StartDateTime
+                $InputEndDate.SelectedDate = $EndDateTime
+            })
             $Window.Add_ContentRendered({
                 1..12 | foreach-object { $HourDropdownStart.AddChild($_);$HourDropdownEnd.AddChild($_) }
                 @("AM","PM") | foreach-object { $AmPmDropdownStart.AddChild($_);$AmPmDropdownEnd.AddChild($_) }
@@ -597,7 +665,11 @@ if($SearchQuery.Length -eq 0){
             }
         } else {
             read-host "GUI returned an error, press any key to stop"
-            Remove-PSSession $Session
+            try {
+                Remove-PSSession $Session -ErrorAction SilentlyContinue
+            } catch {
+                
+            }
             exit
         }
     } else {
