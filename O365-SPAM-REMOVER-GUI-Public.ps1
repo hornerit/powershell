@@ -104,7 +104,6 @@ if($null -ne $CredU -and $CredU.Length -gt 0){
             exit
         }
         $Session = Get-PSSession
-        
     } else {
         $Cred = New-Object PSCredential($CredU,(ConvertTo-SecureString $CredP))
         try{
