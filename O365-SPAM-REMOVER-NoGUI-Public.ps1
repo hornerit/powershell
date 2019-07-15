@@ -89,26 +89,36 @@ if($null -ne $CredU -and $CredU.Length -gt 0){
     write-host "Username supplied, attempting to connect to O365"
     if(!($NoMFA)){
         Get-PSSession | Remove-PSSession
-        Connect-EXOPSSession -UserPrincipalName $CredU 3>$null
-        $Session = Get-PSSession
         try {
-            Invoke-Command -Session $Session -ScriptBlock { Get-OrganizationConfig | Select-Object Name } -ErrorAction Stop
+            Connect-EXOPSSession -UserPrincipalName $CredU 3>$null
         } catch {
-            Read-Host "The account supplied does not appear to be an Exchange Admin account, please try again. Press any key to close..."
+            Write-Host "Unable to establish a connection to O365. You will need to re-run the script using this command to simply try again or you can change something:"
+            Write-Host "$($MyInvocation.MyCommand.Definition) -CredU $CredU -CredP $CredP -SearchQuery `"$SearchQuery`" -Recipients $Recipients"
+            do{
+                $ReadyToClose = Read-Host "Press 'Y' key to close this script (make sure you copy the above command to paste and run in another powershell window to try again without running the whole giant script again)"
+            } until ($ReadyToClose -eq "y")
             exit
         }
+        $Session = Get-PSSession
+        
     } else {
         $Cred = New-Object PSCredential($CredU,(ConvertTo-SecureString $CredP))
         try{
             $Session = New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri https://outlook.office365.com/powershell-liveid -Authentication Basic -AllowRedirection -Credential $Cred -ErrorAction Stop
         } catch {
             Write-Host "Unable to establish a connection to O365. You will need to re-run the script using this command to simply try again or you can change something:"
-            Write-Host "$($MyInvocation.MyCommand.Definition) -CredU $CredU -CredP $CredP -SearchQuery `"$SearchQuery`" -Recipients $Recipients -MFA:$NoMFA"
+            Write-Host "$($MyInvocation.MyCommand.Definition) -CredU $CredU -CredP $CredP -SearchQuery `"$SearchQuery`" -Recipients $Recipients -NoMFA"
             do{
                 $ReadyToClose = Read-Host "Press 'Y' key to close this script (make sure you copy the above command to paste and run in another powershell window to try again without running the whole giant script again)"
             } until ($ReadyToClose -eq "y")
             exit
         }
+    }
+    try {
+        Invoke-Command -Session $Session -ScriptBlock { Get-OrganizationConfig | Select-Object Name } -ErrorAction Stop
+    } catch {
+        Read-Host "The account supplied does not appear to be an Exchange Admin account, please try again. Press any key to close..."
+        exit
     }
 } else {
     $Creds = New-Object -TypeName System.Collections.ArrayList
