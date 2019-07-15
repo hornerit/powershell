@@ -29,6 +29,7 @@ OPTIONAL Number of Mailboxes to process per powershell window generated. Default
   Created by: Brendan Horner (www.hornerit.com)
   Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
   Version History:
+  --2019-07-15-Fixed bug for child windows again for MFA parameter
   --2019-06-27-Fixed bug for child windows due to changing MFA parameter to NoMFA and updated MFA Exchange Module to use the latest version
   --2019-06-19-Altered MFA parameter to be NoMFA so someone can force basic auth by setting that switch and adjusted MFA module to pull the latest version of the module on your machine
   --2019-05-28-Bug Fixes for MFA and errors in mailbox
