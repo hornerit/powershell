@@ -43,6 +43,7 @@ OPTIONAL Number of Mailboxes to process per powershell window generated. Default
 .\O365-SPAM-REMOVER.ps1
 .\O365-SPAM-REMOVER.ps1 -Recipients "someone@CONTOSO.COM,someoneelse@CONTOSO.COM" -SearchQuery "FROM:bob@something.com AND Received:04/19/2018"
 #>
+[CmdletBinding()]
 param(
 [string]
 $StartDate,
@@ -100,7 +101,6 @@ if($null -ne $CredU -and $CredU.Length -gt 0){
             exit
         }
         $Session = Get-PSSession
-        
     } else {
         $Cred = New-Object PSCredential($CredU,(ConvertTo-SecureString $CredP))
         try{

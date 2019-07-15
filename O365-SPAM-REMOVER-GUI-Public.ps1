@@ -70,8 +70,8 @@ $MailboxesPerWindow = 500,
 $NoMFA
 )
 
-#Try to get the Exchange Online Powershell module that supports MFA
 if(!($NoMFA)){
+    #Try to get the Exchange Online Powershell module that supports MFA
     try{
         $getChildItemSplat = @{
             Path = "$Env:LOCALAPPDATA\Apps\2.0\*\CreateExoPSSession.ps1"
