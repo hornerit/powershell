@@ -29,6 +29,7 @@ OPTIONAL Number of Mailboxes to process per powershell window generated. Default
   Created by: Brendan Horner (www.hornerit.com)
   Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
   Version History:
+  --2019-07-16-Added feature: filters for email status
   --2019-07-15-Fixed bug for child windows again for MFA parameter
   --2019-06-27-Fixed bug for child windows due to changing MFA parameter to NoMFA and updated MFA Exchange Module to use the latest version
   --2019-06-19-Altered MFA parameter to be NoMFA so someone can force basic auth by setting that switch and adjusted MFA module to pull the latest version of the module on your machine
@@ -67,8 +68,8 @@ $MailboxesPerWindow = 500,
 $NoMFA
 )
 
+#Try to get the Exchange Online Powershell module that supports MFA
 if(!($NoMFA)){
-    #Try to get the Exchange Online Powershell module that supports MFA
     try{
         $getChildItemSplat = @{
             Path = "$Env:LOCALAPPDATA\Apps\2.0\*\CreateExoPSSession.ps1"
@@ -246,7 +247,21 @@ if($SearchQuery.Length -eq 0){
         $SubjectLineStr = $SubjectLineStr.TrimEnd(" OR Subject:")
         $SubjectLineStr += ")"
     }
- 
+
+    #Get the desired Email status - Delivered, FilteredAsSpam, or both
+    $EmailStatusFilter = @("Pending")
+    do{
+        try {
+            $StatusInput = [int](Read-Host "[Required]Status of emails being processed: `n[1]Delivered, [2]FilteredAsSpam, [3]Both`n(Default is 3):" -ErrorAction Stop)
+            switch ($StatusInput) {
+                1 { $EmailStatusFilter = "Pending","Delivered" }
+                2 { $EmailStatusFilter = "Pending","FilteredAsSpam" }
+                Default { $EmailStatusFilter = "Pending","FilteredAsSpam","Delivered" }
+            }
+            $Good = 1
+        } catch {Write-Host "Invalid Response"}
+    } until ($Good -eq 1)
+
     #Build Search Query from the SearchStartDate, SearchEndDate, subject line(s), and evil sender(s)
  
     $SearchQuery = "(Received:`""+$SearchStartDate.toString()+".."+$SearchEndDate.toString()+"`") AND "
@@ -295,7 +310,7 @@ if($Recipients.length -eq 0){
     do {
         $Page++
         Write-Host "  Getting Page $Page of results, can take up to 5 minutes..."
-        $a = (Invoke-Command -Session $Session -ScriptBlock { Get-MessageTrace -SenderAddress $Using:SenderList -StartDate $Using:SearchStartDateStr -EndDate $Using:SearchEndDateStr -Pagesize 5000 -Page $Using:Page -Status "Pending","Delivered" -ErrorAction Stop | select-object recipientaddress} -HideComputerName).recipientaddress
+        $a = (Invoke-Command -Session $Session -ScriptBlock { Get-MessageTrace -SenderAddress $Using:SenderList -StartDate $Using:SearchStartDateStr -EndDate $Using:SearchEndDateStr -Pagesize 5000 -Page $Using:Page -Status $Using:EmailStatusFilter -ErrorAction Stop | select-object recipientaddress} -HideComputerName).recipientaddress
         Write-Host "  Done."
         if($null -ne $a){
             #For every person found in the trace, we look to make sure it is not already in the list and that it is an LU address to which we can actually do something
