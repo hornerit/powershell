@@ -31,6 +31,7 @@ OPTIONAL Number of Mailboxes to process per powershell window generated. Default
   Created by: Brendan Horner (www.hornerit.com)
   Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
   Version History:
+  --2019-07-16-Added 2 new features - buttons for recent times and filters for email status
   --2019-07-15-Fixed bug for child windows again for MFA parameter
   --2019-06-27-Bugfix for MFA Module loading to use LastWriteTime instead of Modified since Modified doesn't exist
   --2019-06-19-Altered MFA parameter to be NoMFA so someone can force basic auth by setting that switch and adjusted MFA module to pull the latest version of the module on your machine. Bug fix from anonymous commenter.
@@ -70,8 +71,8 @@ $MailboxesPerWindow = 500,
 $NoMFA
 )
 
+#Try to get the Exchange Online Powershell module that supports MFA
 if(!($NoMFA)){
-    #Try to get the Exchange Online Powershell module that supports MFA
     try{
         $getChildItemSplat = @{
             Path = "$Env:LOCALAPPDATA\Apps\2.0\*\CreateExoPSSession.ps1"
@@ -178,7 +179,7 @@ if($SearchQuery.Length -eq 0){
                 <Window
                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                x:Name="Window" Title="SPAM Removal Script GUI" WindowStartupLocation="CenterScreen" Width="550" Height="775" ShowInTaskbar="True" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                x:Name="Window" Title="SPAM Removal Script GUI" WindowStartupLocation="CenterScreen" SizeToContent="WidthAndHeight" ShowInTaskbar="True" ScrollViewer.VerticalScrollBarVisibility="Auto">
                     <Window.Resources>
                         <Style x:Key="ButtonRoundedCorners" TargetType="Button">
                             <Setter Property="Template">
@@ -254,9 +255,15 @@ if($SearchQuery.Length -eq 0){
                         </StackPanel>
                         <Separator Margin="0,10"/>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10,0,0,0">
-                            <Button x:Name="btn24h" Content="Last 24h" Margin="0,0,10,0"/>
-                            <Button x:Name="btn48h" Content="Last 48h" Margin="0,0,10,0"/>
-                            <Button x:Name="btn72h" Content="Last 72h"/>
+                            <Button x:Name="btn24h" Content="Last 24h" Margin="0,0,20,0"/>
+                            <Button x:Name="btn48h" Content="Last 48h" Margin="0,0,20,0"/>
+                            <Button x:Name="btn72h" Content="Last 72h" Margin="0,0,20,0"/>
+                            <StackPanel x:Name="stackPanelRadioEmailStatus" Orientation="Horizontal">
+                                <RadioButton GroupName="radioEmailStatus" Content="Delivered" x:Name="Delivered" Margin="20,0,0,0"/>
+                                <RadioButton GroupName="radioEmailStatus" Content="FilteredAsSpam" x:Name="FilteredAsSpam" Margin="20,0,0,0"/>
+                                <RadioButton GroupName="radioEmailStatus" Content="Both" x:Name="Both" Margin="20,0,0,0" IsChecked="True"/>
+                                <TextBox x:Name="textRadioEmailStatus" Visibility="Hidden" Height="1" Width="1" Margin="20,0,0,0" Text="Both"/>
+                            </StackPanel>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <StackPanel Orientation="Vertical" HorizontalAlignment="Left" VerticalAlignment="Bottom">
@@ -324,6 +331,7 @@ if($SearchQuery.Length -eq 0){
             $Window = [Windows.Markup.XamlReader]::Load($Reader)
 
             #Powershell variables for the controls in the GUI
+            $stackPanelRadioEmailStatus = $Window.FindName('stackPanelRadioEmailStatus')
             $InputEvilSenderTxt = $Window.FindName('inputEvilSenderTxt')
             $ListboxEvilSenders = $Window.FindName('listboxEvilSenders')
             $BtnAddEvilSender = $Window.FindName('btnAddEvilSender')
@@ -350,6 +358,13 @@ if($SearchQuery.Length -eq 0){
             $Animation4txtBtnAddExchAdmin = $Window.FindName('RotateAddExchAdminButton')
             $BtnRemoveExchAdmin = $Window.FindName('btnRemoveExchAdmin')
             $ListboxExchangeAdmins = $Window.FindName('listboxExchangeAdmins')
+            $textRadioEmailStatus = $Window.FindName('textRadioEmailStatus')
+
+            #Event handler for the radio buttons, gets added to the StackPanel that holds the radio buttons as an event
+            [System.Windows.RoutedEventHandler]$Script:CheckedEventHandler = {
+                $textRadioEmailStatus.Text = $_.source.name
+            }
+            $stackPanelRadioEmailStatus.AddHandler([System.Windows.Controls.RadioButton]::CheckedEvent, $CheckedEventHandler)
 
             #Functions attached to different controls in the GUI or run from using different controls
             function Resolve-DateInputs{
@@ -535,8 +550,8 @@ if($SearchQuery.Length -eq 0){
                 Resolve-RequiredInputs
             })
             $Btn24h.Add_Click({
-                $StartDateTime = (Get-Date).AddHours(-24)
-                $EndDateTime = (Get-Date).AddHours(1)
+                $StartDateTime = (get-date (get-date -format "yyyy-MM-ddTHH:00:00")).AddHours(-24)
+                $EndDateTime = (get-date (get-date -format "yyyy-MM-ddTHH:00:00")).AddHours(1)
                 if($StartDateTime.Hour -gt 12){
                     $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 13
                     $AmPmDropdownStart.SelectedIndex = 1
@@ -546,17 +561,18 @@ if($SearchQuery.Length -eq 0){
                 }
                 if($EndDateTime.Hour -gt 12){
                     $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 13
-                    $AmPmDropdownEnd.SelectedIndex = 0
+                    $AmPmDropdownEnd.SelectedIndex = 1
                 } else {
                     $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour
-                    $AmPmDropdownEnd.SelectedIndex = 1
+                    $AmPmDropdownEnd.SelectedIndex = 0
                 }
-                $InputStartDate.SelectedDate = $StartDateTime
-                $InputEndDate.SelectedDate = $EndDateTime
+                $InputStartDate.SelectedDate = $StartDateTime.Date
+                $InputEndDate.SelectedDate = $EndDateTime.Date
+                Resolve-RequiredInputs
             })
             $Btn48h.Add_Click({
-                $StartDateTime = (Get-Date).AddHours(-24)
-                $EndDateTime = (Get-Date).AddHours(1)
+                $StartDateTime = (get-date (get-date -format "yyyy-MM-ddTHH:00:00")).AddHours(-48)
+                $EndDateTime = (get-date (get-date -format "yyyy-MM-ddTHH:00:00")).AddHours(1)
                 if($StartDateTime.Hour -gt 12){
                     $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 13
                     $AmPmDropdownStart.SelectedIndex = 1
@@ -566,17 +582,18 @@ if($SearchQuery.Length -eq 0){
                 }
                 if($EndDateTime.Hour -gt 12){
                     $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 13
-                    $AmPmDropdownEnd.SelectedIndex = 0
+                    $AmPmDropdownEnd.SelectedIndex = 1
                 } else {
                     $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour
-                    $AmPmDropdownEnd.SelectedIndex = 1
+                    $AmPmDropdownEnd.SelectedIndex = 0
                 }
-                $InputStartDate.SelectedDate = $StartDateTime
-                $InputEndDate.SelectedDate = $EndDateTime
+                $InputStartDate.SelectedDate = $StartDateTime.Date
+                $InputEndDate.SelectedDate = $EndDateTime.Date
+                Resolve-RequiredInputs
             })
             $Btn72h.Add_Click({
-                $StartDateTime = (Get-Date).AddHours(-24)
-                $EndDateTime = (Get-Date).AddHours(1)
+                $StartDateTime = (get-date (get-date -format "yyyy-MM-ddTHH:00:00")).AddHours(-72)
+                $EndDateTime = (get-date (get-date -format "yyyy-MM-ddTHH:00:00")).AddHours(1)
                 if($StartDateTime.Hour -gt 12){
                     $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 13
                     $AmPmDropdownStart.SelectedIndex = 1
@@ -586,13 +603,14 @@ if($SearchQuery.Length -eq 0){
                 }
                 if($EndDateTime.Hour -gt 12){
                     $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 13
-                    $AmPmDropdownEnd.SelectedIndex = 0
+                    $AmPmDropdownEnd.SelectedIndex = 1
                 } else {
                     $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour
-                    $AmPmDropdownEnd.SelectedIndex = 1
+                    $AmPmDropdownEnd.SelectedIndex = 0
                 }
-                $InputStartDate.SelectedDate = $StartDateTime
-                $InputEndDate.SelectedDate = $EndDateTime
+                $InputStartDate.SelectedDate = $StartDateTime.Date
+                $InputEndDate.SelectedDate = $EndDateTime.Date
+                Resolve-RequiredInputs
             })
             $Window.Add_ContentRendered({
                 1..12 | foreach-object { $HourDropdownStart.AddChild($_);$HourDropdownEnd.AddChild($_) }
@@ -618,6 +636,13 @@ if($SearchQuery.Length -eq 0){
             $DatesTimes = Resolve-DateInputs
             $StartDateTime = $DatesTimes.StartDateTime
             $EndDateTime = $DatesTimes.EndDateTime
+            $EmailStatus = if($textRadioEmailStatus.text -eq "Both"){
+                "Pending","Delivered","FilteredAsSpam"
+            } elseif($textRadioEmailStatus.text -eq "Delivered"){
+                "Pending","Delivered"
+            } else {
+                "Pending","FilteredAsSpam"
+            }
             return [PSCustomObject]@{
                 GUIGood = $GUIGood
                 StartDateTime = $StartDateTime
@@ -625,6 +650,7 @@ if($SearchQuery.Length -eq 0){
                 Senders = $Senders
                 SubjectLineStr = $SubjectLineStr
                 Creds = $Creds
+                EmailStatus = $EmailStatus
             }
         }
         $GUIData = Get-GUIData -NoMFA:$NoMFA
@@ -634,7 +660,10 @@ if($SearchQuery.Length -eq 0){
 
             #SET SENDERS TO AN ARRAY JOINED BY COMMAS
             $Senders = $GUIData.Senders
-                
+
+            #SET Email status string for the message trace for Delivered, FilteredAsSpam, or both
+            $EmailStatusFilter = $GUIData.EmailStatus
+
             #Set the search start date and end date based on the selected information
             $SearchStartDate = $GUIData.StartDateTime.ToUniversalTime()
             $SearchEndDate = $GUIData.EndDateTime.ToUniversalTime()
@@ -770,6 +799,20 @@ if($SearchQuery.Length -eq 0){
             $SubjectLineStr += ")"
         }
 
+        #Get the desired Email status - Delivered, FilteredAsSpam, or both
+        $EmailStatusFilter = @("Pending")
+        do{
+            try {
+                $StatusInput = [int](Read-Host "[Required]Status of emails being processed: `n[1]Delivered, [2]FilteredAsSpam, [3]Both`n(Default is 3):" -ErrorAction Stop)
+                switch ($StatusInput) {
+                    1 { $EmailStatusFilter = "Pending","Delivered" }
+                    2 { $EmailStatusFilter = "Pending","FilteredAsSpam" }
+                    Default { $EmailStatusFilter = "Pending","FilteredAsSpam","Delivered" }
+                }
+                $Good = 1
+            } catch {Write-Host "Invalid Response"}
+        } until ($Good -eq 1)
+
         #Build Search Query from the SearchStartDate, SearchEndDate, subject line(s), and evil sender(s)
 
         $SearchQuery = "(Received:`""+$SearchStartDate.toString()+".."+$SearchEndDate.toString()+"`") AND "
@@ -819,7 +862,7 @@ if($Recipients.length -eq 0){
     do {
         $Page++
         Write-Host "  Getting Page $Page of results, can take up to 5 minutes..."
-        $a = (Invoke-Command -Session $Session -ScriptBlock { Get-MessageTrace -SenderAddress $Using:SenderList -StartDate $Using:SearchStartDateStr -EndDate $Using:SearchEndDateStr -Pagesize 5000 -Page $Using:Page -Status "Pending","Delivered" -ErrorAction Stop | select-object recipientaddress} -HideComputerName).recipientaddress
+        $a = (Invoke-Command -Session $Session -ScriptBlock { Get-MessageTrace -SenderAddress $Using:SenderList -StartDate $Using:SearchStartDateStr -EndDate $Using:SearchEndDateStr -Pagesize 5000 -Page $Using:Page -Status $Using:EmailStatusFilter -ErrorAction Stop | select-object recipientaddress} -HideComputerName).recipientaddress
         Write-Host "  Done."
         if($null -ne $a){
             #For every person found in the trace, we look to make sure it is not already in the list and that it is an LU address to which we can actually do something
