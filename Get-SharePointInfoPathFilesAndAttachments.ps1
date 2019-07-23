@@ -26,6 +26,7 @@ OPTIONAL If you have previously run this script for the library or already have 
   --http://chrissyblanco.blogspot.ie/2006/07/infopath-2007-file-attachment-control.html
   --https://stackoverflow.com/questions/14905396/using-powershell-to-read-modify-rewrite-sharepoint-xml-document
   Version History:
+  --2019-07-23-Updated wording for local download path to be more clear
   --2019-06-17-Initial public version in GitHub, adjusted some settings from previous private work
 
 .EXAMPLE
@@ -36,7 +37,7 @@ param(
 	[string]$libraryname = (Read-Host "What is the library name?"),
 	[string[]]$folderStructureNodes = ((Read-Host "If InfoPath forms found, what data source (or sources, comma-separated) should be used to create folders? If the data source is actually an attribute of a parent data source, type the data source then add a period and type the attribute name: e.g. mydatasourcewithattributes.attribute5") -split ","),
 	[string]$CutOffDate = (Read-Host "Please enter the last date you wish to archive, leave empty for all dates - we will process till Modified date/time is 11:59:59 PM of cutoff day"),
-	[string]$LocalDownloadPath = (Read-Host "Please type a path to a folder in which this script will store downloaded files and begin processing them into subfolders"),
+	[string]$LocalDownloadPath = (Read-Host "Please type a path to a folder in which this script will work. This script will create a subfolder for this library and subfolders within that."),
 	[switch]$SkipDownload
 )
 $siteurl = $siteurl.trim().trimend("/\")
