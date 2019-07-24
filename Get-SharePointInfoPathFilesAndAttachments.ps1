@@ -58,7 +58,7 @@ $webclient.Credentials = $cred
 
 #Check if the cutoff date is specified or a folder structure node to create folders for embedded attachments within XML files
 if($StartDate.Length -gt 0){
-	$dtStartDate = (get-date -date "$dtStartDate 12:00:00 AM")
+	$dtStartDate = (get-date -date "$StartDate 12:00:00 AM")
 } else {
 	$dtStartDate = ""
 }
