@@ -26,7 +26,7 @@ OPTIONAL If you have previously run this script for the library or already have 
   --http://chrissyblanco.blogspot.ie/2006/07/infopath-2007-file-attachment-control.html
   --https://stackoverflow.com/questions/14905396/using-powershell-to-read-modify-rewrite-sharepoint-xml-document
   Version History:
-  --2019-07-23-Updated wording for local download path to be more clear
+  --2019-07-23-Updated wording for local download path to be more clear, added StartDate filter and clarified language
   --2019-06-17-Initial public version in GitHub, adjusted some settings from previous private work
 
 .EXAMPLE
@@ -36,6 +36,7 @@ param(
 	[string]$siteurl = (Read-Host "What is the url to the site in question?"),
 	[string]$libraryname = (Read-Host "What is the library name?"),
 	[string[]]$folderStructureNodes = ((Read-Host "If InfoPath forms found, what data source (or sources, comma-separated) should be used to create folders? If the data source is actually an attribute of a parent data source, type the data source then add a period and type the attribute name: e.g. mydatasourcewithattributes.attribute5") -split ","),
+	[string]$StartDate = (Read-Host "Please enter the start date for files you wish to archive. Leave empty for the earliest files in the library. It will assume midnight of the start date you supple. E.g. 1/1/2010"),
 	[string]$CutOffDate = (Read-Host "Please enter the last date you wish to archive, leave empty for all dates - we will process till Modified date/time is 11:59:59 PM of cutoff day"),
 	[string]$LocalDownloadPath = (Read-Host "Please type a path to a folder in which this script will work. This script will create a subfolder for this library and subfolders within that."),
 	[switch]$SkipDownload
@@ -54,6 +55,13 @@ if ($null -eq (Get-PSSnapin "Microsoft.SharePoint.PowerShell" -ErrorAction Silen
 #Create an internet browser object for downloading and set the authentication information for it
 $webclient = New-Object System.Net.WebClient
 $webclient.Credentials = $cred
+
+#Check if the cutoff date is specified or a folder structure node to create folders for embedded attachments within XML files
+if($StartDate.Length -gt 0){
+	$dtStartDate = (get-date -date "$dtStartDate 12:00:00 AM")
+} else {
+	$dtStartDate = ""
+}
 
 #Check if the cutoff date is specified or a folder structure node to create folders for embedded attachments within XML files
 if($CutOffDate.Length -gt 0){
@@ -114,7 +122,7 @@ if(!($SkipDownload)){
 	$query = New-Object Microsoft.SharePoint.SPQuery
 	$query.ViewAttributes = "Scope='Recursive'"
 	$query.RowLimit = 1000
-	$query.ViewFields = "<FieldRef Name='ID'/><FieldRef Name='LinkFilenameNoMenu'/><FieldRef Name='Last_x0020_Modified'/>"
+	$query.ViewFields = "<FieldRef Name='ID'/><FieldRef Name='LinkFilenameNoMenu'/><FieldRef Name='Last_x0020_Modified'/><FieldRef Name='Created_x0020_Date'/>"
 	$query.ViewFieldsOnly = $true
 	
 	#Looping logic - approximating the size of the library because a giant library would use all of your RAM before you could process it
@@ -135,6 +143,9 @@ if(!($SkipDownload)){
 			if(($loopCounter % $interval) -eq 0){
 				Write-Progress -id 1 -activity "Step 1 of 2: Downloading Files" -status "Working on $loopCounter of appx $loopTotal" -percentComplete ($loopCounter/$loopTotal*100)
 			}
+			if($dtStartDate -ne "" -and (Get-Date -Date $file["Created_x0020_Date"]) -lt $dtStartDate){
+				continue
+			}
 			if($dtCutOffDate -ne "" -and (Get-Date -date $file["Last_x0020_Modified"]) -gt $dtCutOffDate){
 				continue
 			}
@@ -147,8 +158,8 @@ if(!($SkipDownload)){
 	$web.dispose()
 	$timer.Stop()
 	Write-Output "Part 1 Stats:"
-	Write-Output "Total Source files: $loopTotal"
-	Write-Output "Total time to download source files: $($timer.Elapsed.TotalSeconds) seconds"
+	Write-Output "Total Source files (ignoring date/time filtering): $loopTotal"
+	Write-Output "Total time to download (skipping filtered) source files: $($timer.Elapsed.TotalSeconds) seconds"
 }
 
 #Start a timer to see how long the extraction process takes
