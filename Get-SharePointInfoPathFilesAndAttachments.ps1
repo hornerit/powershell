@@ -30,6 +30,7 @@ OPTIONAL By default, the date filters are based on when the infopath file was cr
   --http://chrissyblanco.blogspot.ie/2006/07/infopath-2007-file-attachment-control.html
   --https://stackoverflow.com/questions/14905396/using-powershell-to-read-modify-rewrite-sharepoint-xml-document
   Version History:
+  --2019-07-29-Adjusted filename logic to use appropriate encoding and added some more documentation
   --2019-07-24-Added switch for using modified date instead of created date for differenct scenarios
   --2019-07-23-Updated wording for local download path to be more clear, added StartDate filter and clarified language
   --2019-06-17-Initial public version in GitHub, adjusted some settings from previous private work
@@ -149,10 +150,15 @@ if(!($SkipDownload)){
 			if(($loopCounter % $interval) -eq 0){
 				Write-Progress -id 1 -activity "Step 1 of 2: Downloading Files" -status "Working on $loopCounter of appx $loopTotal (Updates every $interval files processed)" -percentComplete ($loopCounter/$loopTotal*100)
 			}
-			if($dtStartDate -ne "" -and (Get-Date -Date (if(!($UseLastModifiedInsteadOfCreatedDate)){ $file["Created_x0020_Date"] } else { $file["Last_x0020_Modified"] })) -lt $dtStartDate){
+			if(!($UseLastModifiedInsteadOfCreatedDate)){
+				$comparisonDate = (Get-Date -Date ($file["Created_x0020_Date"]))
+			} else {
+				$comparisonDate = (Get-Date -Date ($file["Last_x0020_Modified"]))
+			}
+			if($dtStartDate -ne "" -and $comparisonDate -lt $dtStartDate){
 				continue
 			}
-			if($dtCutOffDate -ne "" -and (Get-Date -date (if(!($UseLastModifiedInsteadOfCreatedDate)){ $file["Created_x0020_Date"] } else { $file["Last_x0020_Modified"] })) -gt $dtCutOffDate){
+			if($dtCutOffDate -ne "" -and $comparisonDate -gt $dtCutOffDate){
 				continue
 			}
 			$webclient.DownloadFile($siteurl + "/" + $file.Url + "?NoRedirect=true",$filepath2+$file.Name)
@@ -229,19 +235,24 @@ if(!($DownloadOnly)){
 				$b64name = $b64name.Substring(3)
 				$bytes = [Convert]::FromBase64String($b64)
 				if($bytes.length -gt 0){
-					$arrFileNameBytes = @()
-					#When the attachment is broken into byte strings, the 20th byte tells you how many bytes are used for the filename. Multiply by 2 for ASCII encoding
+					#BYTE WORK
+					#When the attachment is broken into byte strings, the 20th byte tells you how many bytes are used for the filename. Multiply by 2 for Unicode encoding
 					$fileNameByteLen = $bytes[20]*2
-					#Recreate the filename using every other char from filename bytes
-					for($i=0;$i -lt $fileNameByteLen-2;$i+=2){
-						$arrFileNameBytes+=$bytes[24+$i]
+					#Extract the bytes for the filename
+					$arrFileNameBytes = for($i=0;$i -lt $fileNameByteLen;$i++){
+						$bytes[24+$i]
 					}
-					$arrFileContentBytes = @()
-					#Determine content length by Total - Header - Filename
-					$fileContentByteLen = $bytes.length-(24+$fileNameByteLen)
+					#Determine content length by Total - Header (which is 24 bytes long) - Filename
+					$fileByteHeader=24
+					$fileContentByteLen = $bytes.length-$fileByteHeader-$fileNameByteLen
+					$fileContentBytesStart = $fileByteHeader+$fileContentByteLen
+					$fileContentBytesEnd = $fileByteHeader+$fileNameByteLen+$fileContentByteLen
 					#Create new array by cloning the content bytes into new array
-					$arrFileContentBytes = $bytes[(24+$fileNameByteLen)..($fileContentByteLen+24+$fileNameByteLen)]
-					$fileName = [System.Text.Encoding]::ASCII.GetString($arrFileNameBytes)
+					$arrFileContentBytes = $bytes[($fileContentBytesStart)..($fileContentBytesEnd)]
+					$fileName = [System.Text.Encoding]::Unicode.GetString($arrFileNameBytes)
+					$fileName = $fileName.substring(0,$fileName.length -1)
+
+					#PROCESSING BYTE WORK RESULTS
 					#Clean up filename to get rid of spaces and illegal characters and files with too short a name
 					$fileName = $fileName.trim()
 					$fileName = $fileName -replace '[^\p{L}\p{Nd}/(/_/)/./-]',''
