@@ -250,10 +250,10 @@ if(!($DownloadOnly)){
 					#Create new array by cloning the content bytes into new array
 					$arrFileContentBytes = $bytes[($fileContentBytesStart)..($fileContentBytesEnd)]
 					$fileName = [System.Text.Encoding]::Unicode.GetString($arrFileNameBytes)
-					$fileName = $fileName.substring(0,$fileName.length -1)
 
 					#PROCESSING BYTE WORK RESULTS
 					#Clean up filename to get rid of spaces and illegal characters and files with too short a name
+					$fileName = $fileName.substring(0,$fileName.length -1)
 					$fileName = $fileName.trim()
 					$fileName = $fileName -replace '[^\p{L}\p{Nd}/(/_/)/./-]',''
 					if($fileName.length -lt 6){
