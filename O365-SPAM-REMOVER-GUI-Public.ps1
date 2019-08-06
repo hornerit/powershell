@@ -31,6 +31,7 @@ OPTIONAL Number of Mailboxes to process per powershell window generated. Default
   Created by: Brendan Horner (www.hornerit.com)
   Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
   Version History:
+  --2019-08-06-Bugfix for hour calculation using new buttons
   --2019-07-16-Added 2 new features - buttons for recent times and filters for email status
   --2019-07-15-Fixed bug for child windows again for MFA parameter
   --2019-06-27-Bugfix for MFA Module loading to use LastWriteTime instead of Modified since Modified doesn't exist
@@ -557,14 +558,22 @@ if($SearchQuery.Length -eq 0){
                     $AmPmDropdownStart.SelectedIndex = 1
                 } else {
                     $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 1
-                    $AmPmDropdownStart.SelectedIndex = 0
+                    if($StartDateTime.Hour -ne 12){
+                        $AmPmDropdownStart.SelectedIndex = 0
+                    } else {
+                        $AmPmDropdownStart.SelectedIndex = 1
+                    }
                 }
                 if($EndDateTime.Hour -gt 12){
                     $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 13
                     $AmPmDropdownEnd.SelectedIndex = 1
                 } else {
-                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour
-                    $AmPmDropdownEnd.SelectedIndex = 0
+                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 1
+                    if($EndDateTime.Hour -ne 12){
+                        $AmPmDropdownEnd.SelectedIndex = 0
+                    } else {
+                        $AmPmDropdownEnd.SelectedIndex = 1
+                    }
                 }
                 $InputStartDate.SelectedDate = $StartDateTime.Date
                 $InputEndDate.SelectedDate = $EndDateTime.Date
@@ -578,14 +587,22 @@ if($SearchQuery.Length -eq 0){
                     $AmPmDropdownStart.SelectedIndex = 1
                 } else {
                     $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 1
-                    $AmPmDropdownStart.SelectedIndex = 0
+                    if($StartDateTime.Hour -ne 12){
+                        $AmPmDropdownStart.SelectedIndex = 0
+                    } else {
+                        $AmPmDropdownStart.SelectedIndex = 1
+                    }
                 }
                 if($EndDateTime.Hour -gt 12){
                     $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 13
                     $AmPmDropdownEnd.SelectedIndex = 1
                 } else {
-                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour
-                    $AmPmDropdownEnd.SelectedIndex = 0
+                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 1
+                    if($EndDateTime.Hour -ne 12){
+                        $AmPmDropdownEnd.SelectedIndex = 0
+                    } else {
+                        $AmPmDropdownEnd.SelectedIndex = 1
+                    }
                 }
                 $InputStartDate.SelectedDate = $StartDateTime.Date
                 $InputEndDate.SelectedDate = $EndDateTime.Date
@@ -599,14 +616,22 @@ if($SearchQuery.Length -eq 0){
                     $AmPmDropdownStart.SelectedIndex = 1
                 } else {
                     $HourDropdownStart.SelectedIndex = $StartDateTime.Hour - 1
-                    $AmPmDropdownStart.SelectedIndex = 0
+                    if($StartDateTime.Hour -ne 12){
+                        $AmPmDropdownStart.SelectedIndex = 0
+                    } else {
+                        $AmPmDropdownStart.SelectedIndex = 1
+                    }
                 }
                 if($EndDateTime.Hour -gt 12){
                     $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 13
                     $AmPmDropdownEnd.SelectedIndex = 1
                 } else {
-                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour
-                    $AmPmDropdownEnd.SelectedIndex = 0
+                    $HourDropdownEnd.SelectedIndex = $EndDateTime.Hour - 1
+                    if($EndDateTime.Hour -ne 12){
+                        $AmPmDropdownEnd.SelectedIndex = 0
+                    } else {
+                        $AmPmDropdownEnd.SelectedIndex = 1
+                    }
                 }
                 $InputStartDate.SelectedDate = $StartDateTime.Date
                 $InputEndDate.SelectedDate = $EndDateTime.Date
