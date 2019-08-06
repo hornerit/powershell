@@ -31,7 +31,7 @@ OPTIONAL Number of Mailboxes to process per powershell window generated. Default
   Created by: Brendan Horner (www.hornerit.com)
   Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
   Version History:
-  --2019-08-06-Bugfix for hour calculation using new buttons
+  --2019-08-06-Bug fix for time buttons and added credential to window title for easier identification
   --2019-07-16-Added 2 new features - buttons for recent times and filters for email status
   --2019-07-15-Fixed bug for child windows again for MFA parameter
   --2019-06-27-Bugfix for MFA Module loading to use LastWriteTime instead of Modified since Modified doesn't exist
@@ -131,7 +131,7 @@ if($null -ne $CredU -and $CredU.Length -gt 0){
 
 #Change window appearance if this is a child window so that it is smaller
 if($Recipients.Length -gt 0){
-    $title = "SPAM REMOVER - Processing "+$Recipients.Substring(0,$Recipients.IndexOf("@"))+" thru "+$Recipients.Substring($Recipients.LastIndexOf(",")+1,$Recipients.LastIndexOf("@")-$Recipients.LastIndexOf(",")-1)
+    $title = "SPAM REMOVER - Processing "+$Recipients.Substring(0,$Recipients.IndexOf("@"))+" thru "+$Recipients.Substring($Recipients.LastIndexOf(",")+1,$Recipients.LastIndexOf("@")-$Recipients.LastIndexOf(",")-1)+" | Using $CredU"
     $Host.ui.RawUI.WindowTitle = $title
     $newSize = $Host.UI.RawUI.WindowSize
     $newSize.Height = 30
