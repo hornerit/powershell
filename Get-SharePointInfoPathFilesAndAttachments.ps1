@@ -30,6 +30,7 @@ OPTIONAL By default, the date filters are based on when the infopath file was cr
   --http://chrissyblanco.blogspot.ie/2006/07/infopath-2007-file-attachment-control.html
   --https://stackoverflow.com/questions/14905396/using-powershell-to-read-modify-rewrite-sharepoint-xml-document
   Version History:
+  --2020-02-04-Fixed bug in attachment content math that was breaking extraction
   --2019-07-29-Adjusted filename logic to use appropriate encoding and added some more documentation
   --2019-07-24-Added switch for using modified date instead of created date for differenct scenarios
   --2019-07-23-Updated wording for local download path to be more clear, added StartDate filter and clarified language
@@ -245,7 +246,7 @@ if(!($DownloadOnly)){
 					#Determine content length by Total - Header (which is 24 bytes long) - Filename
 					$fileByteHeader=24
 					$fileContentByteLen = $bytes.length-$fileByteHeader-$fileNameByteLen
-					$fileContentBytesStart = $fileByteHeader+$fileContentByteLen
+					$fileContentBytesStart = $fileByteHeader+$fileNameByteLen
 					$fileContentBytesEnd = $fileByteHeader+$fileNameByteLen+$fileContentByteLen
 					#Create new array by cloning the content bytes into new array
 					$arrFileContentBytes = $bytes[($fileContentBytesStart)..($fileContentBytesEnd)]
