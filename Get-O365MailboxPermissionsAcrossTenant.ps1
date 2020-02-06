@@ -99,6 +99,7 @@ do{
 $LogPath = "$PSScriptRoot\TranscriptLog-GetTenantMailboxPerms.txt"
 Start-Transcript -Path $LogPath -Append
 $Timer = [System.Diagnostics.Stopwatch]::StartNew()
+$TotalMailboxesProcessed = 0
 
 #Begin processing
 Write-Host "Retrieving Mailbox Permissions...current time is $(Get-Date -format g)"
@@ -169,19 +170,25 @@ try {
         #Actually go get the mailbox
         if($FoldersFoundInFile){
             try {
-                Get-EXOMailbox -Filter "name -gt '$LastMailbox' -and whenChangedUTC -gt '$DateForDelta'" -ResultSize Unlimited -Properties ExternalDirectoryObjectId | Get-EXOMailboxFolderPermission | Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={$_.FolderName}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{Test-ObjectId -DisplayName $_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $ResumeCSVPath -Append
+                Get-EXOMailbox -Filter "name -gt '$LastMailbox' -and whenChangedUTC -gt '$DateForDelta'" -ResultSize Unlimited -Properties ExternalDirectoryObjectId | Tee-Object -Variable "arrMailboxes" | Get-EXOMailboxFolderPermission | Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={$_.FolderName}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{Test-ObjectId -DisplayName $_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $ResumeCSVPath -Append
+                $TotalMailboxesProcessed += $arrMailboxes.Count
+                Remove-Variable -Name "arrMailboxes"
             } catch {
                 throw
             }
         } else {
             try {
                 Get-EXOMailbox -Filter "name -gt '$LastMailbox' -and whenChangedUTC -gt '$DateForDelta'" -ResultSize Unlimited -Properties ExternalDirectoryObjectId | Tee-Object -Variable "arrMailboxes" | Get-EXOMailboxPermission -ExternalDirectoryObjectId $_.ExternalDirectoryObjectId -ResultSize Unlimited | Where-Object { $_.IsInherited -eq $false -and $_.Deny -eq $false -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={''}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{$_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $ResumeCSVPath -Append
+                $TotalMailboxesProcessed += $arrMailboxes.Count
+                Remove-Variable -Name "arrMailboxes"
             } catch {
                 throw
             }
             if($IncludeFolders){
                 try {
-                    Get-EXOMailbox -Filter "whenChangedUTC -gt '$DateForDelta'" -ResultSize Unlimited -Properties ExternalDirectoryObjectId | Get-EXOMailboxFolderPermission | Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={$_.FolderName}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{Test-ObjectId -DisplayName $_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $ResumeCSVPath -Append
+                    Get-EXOMailbox -Filter "whenChangedUTC -gt '$DateForDelta'" -ResultSize Unlimited -Properties ExternalDirectoryObjectId | Tee-Object -Variable "arrMailboxes" | Get-EXOMailboxFolderPermission | Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={$_.FolderName}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{Test-ObjectId -DisplayName $_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $ResumeCSVPath -Append
+                    $TotalMailboxesProcessed += $arrMailboxes.Count
+                    Remove-Variable -Name "arrMailboxes"
                 } catch {
                     throw
                 }
@@ -201,9 +208,19 @@ try {
         Write-Host $Message
         #Create a file called NEW to indicate this is only recently changed data. Once we get the NEW data, we deduplicate and merge into the main list of perms entries and then remove the NEW file since it was temporary
         $CustomPermsCSVPathNew = ($CustomPermsCSVPath.Substring(0,$CustomPermsCSVPath.LastIndexOf("."))+'-NEW.csv')
-        Get-EXOMailbox -Filter "whenChangedUTC -gt '$DateForDelta'" -ResultSize $GetMailboxResultSize -Properties ExternalDirectoryObjectId | Tee-Object -Variable "arrMailboxes" | Get-EXOMailboxPermission -ExternalDirectoryObjectId $_.ExternalDirectoryObjectId -ResultSize Unlimited | Where-Object { $_.IsInherited -eq $false -and $_.Deny -eq $false -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={''}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{$_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $CustomPermsCSVPathNew -Append
+        try {
+            Get-EXOMailbox -Filter "whenChangedUTC -gt '$DateForDelta'" -ResultSize $GetMailboxResultSize -Properties ExternalDirectoryObjectId | Tee-Object -Variable "arrMailboxes" | Get-EXOMailboxPermission -ExternalDirectoryObjectId $_.ExternalDirectoryObjectId -ResultSize Unlimited | Where-Object { $_.IsInherited -eq $false -and $_.Deny -eq $false -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={''}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{$_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $CustomPermsCSVPathNew -Append
+            $TotalMailboxesProcessed += $arrMailboxes.Count
+        } catch {
+            throw
+        }
         if($IncludeFolders){
-            $arrMailboxes | Get-EXOMailboxFolderPermission | Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={$_.FolderName}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{Test-ObjectId -DisplayName $_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $CustomPermsCSVPathNew -Append
+            try{
+                $arrMailboxes | Get-EXOMailboxFolderPermission | Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={$_.FolderName}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{Test-ObjectId -DisplayName $_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $CustomPermsCSVPathNew -Append
+                $TotalMailboxesProcessed += $arrMailboxes.Count
+            } catch {
+                throw
+            }
         } else {
             Remove-Variable -Name "arrMailboxes"
         }
@@ -213,9 +230,20 @@ try {
         Remove-Item $CustomPermsCSVPathNew -Force
     } else {
         Write-Host $Message
-        Get-EXOMailbox -ResultSize $GetMailboxResultSize -Properties ExternalDirectoryObjectId | Tee-Object -Variable "arrMailboxes" | Get-EXOMailboxPermission $_.ExternalDirectoryObjectId -ResultSize Unlimited | Where-Object { $_.IsInherited -eq $false -and $_.Deny -eq $false -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={''}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{$_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $CustomPermsCSVPath -Force
+        try {
+            Get-EXOMailbox -ResultSize $GetMailboxResultSize -Properties ExternalDirectoryObjectId | Tee-Object -Variable "arrMailboxes" | Get-EXOMailboxPermission $_.ExternalDirectoryObjectId -ResultSize Unlimited | Where-Object { $_.IsInherited -eq $false -and $_.Deny -eq $false -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={''}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{$_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $CustomPermsCSVPath -Force
+            $TotalMailboxesProcessed += $arrMailboxes.Count
+        } catch {
+            throw
+        }
         if($IncludeFolders){
-            $arrMailboxes | Get-EXOMailboxFolderPermission | Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={$_.FolderName}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{Test-ObjectId -DisplayName $_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $CustomPermsCSVPath -Append
+            try{
+                $arrMailboxes | Get-EXOMailboxFolderPermission | Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} | Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={$_.FolderName}},@{Label="UserGivenAccess";Expression={if($_.User -like "S-1-5-21-*"){Test-ObjectId -Sid $_.User}else{Test-ObjectId -DisplayName $_.User}}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Export-CSV -Path $CustomPermsCSVPath -Append
+                $TotalMailboxesProcessed += $arrMailboxes.Count
+                Remove-Variable -Name "arrMailboxes"
+            } catch {
+                throw
+            }
         }
     }
 } catch {
@@ -226,7 +254,7 @@ try {
 }
 Get-PSSession | Remove-PSSession
 $Timer.Stop()
-Write-host "Done, the runtime for this entire process was"($timer.Elapsed.TotalMinutes)"minutes."
+Write-host "Done, the runtime for this entire process was"($timer.Elapsed.TotalMinutes)"minutes. Total Mailboxes processed (whether mailboxes, folders, or both): $TotalMailboxesProcessed"
 Stop-Transcript
 Read-Host "Press any key to exit"
 exit
