@@ -4,6 +4,7 @@
     Created By: Brendan Horner (hornerit.com)
     Purpose: Get all custom permissions entries across the entire tenant and store in csv files
     Version History:
+    --2020-02-10-Added check for Sid function to throw error if no results return
     --2020-02-06-Initial public version. Performance with new EXO modules appears to be 8-10 hours per 100k mailboxes
 
 .SYNOPSIS
@@ -44,8 +45,10 @@ function Test-ObjectId{
     try {
         if($Sid.Length -gt 0){
             $ADO = Get-ADObject -Filter "objectSid -eq '$Sid'" -Properties UserPrincipalName -ErrorAction Stop
+            if($ADO.distinguishedName.Length -eq 0){ throw }
         } else {
             $ADO = Get-ADObject -Filter "displayName -eq '$DisplayName'" -Properties UserPrincipalName -ErrorAction Stop
+            if($ADO.distinguishedName.Length -eq 0){ throw }
         }
         if($ADO.UserPrincipalName.Length -gt 0){
             return $ADO.UserPrincipalName
