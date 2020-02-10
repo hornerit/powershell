@@ -51,7 +51,7 @@ function Test-ObjectId{
         }
         if($ADO.distinguishedName.Length -eq 0){ throw }
         if($ADO.count -gt 1){
-            "ERROR: Ambiguous displayname: $ObjectId"
+            "ERROR: Ambiguous: $ObjectId"
         } else {
             if($ADO.UserPrincipalName.Length -gt 0){
                 $ADO.UserPrincipalName
