@@ -4,7 +4,7 @@
     Created By: Brendan Horner (hornerit.com)
     Purpose: Get all custom permissions entries across the entire tenant and store in csv files
     Version History:
-    --2020-02-13-Added fix for forward slashes in mailbox folder names
+    --2020-02-13-Added fix for forward slashes in mailbox folder names as it becomes [char]63743 or a question mark inside a box
     --2020-02-12-Updated folderpath to show full path, added escaping of single quotes for resolving folder permissions, added sorting for folder perms
     --2020-02-11-Added documentation and a regex check for email domain to be the proper format
     --2020-02-10-Added check for Sid function to throw error if no results return, fixed mailbox identity for folder permissions to remove ":\", several folder bugs
@@ -106,6 +106,7 @@ do{
                 Get-OrganizationConfig -ErrorAction Stop | Select-Object Name
             } catch {
                 Write-Host "There was an error connecting to O365: Not an admin, account cannot use basic auth, bad password, or bad email"
+                Get-PSSession | Remove-PSSession
                 $CredEntry = $null
             }
         } else {
