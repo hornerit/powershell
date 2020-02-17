@@ -4,7 +4,7 @@
     Created By: Brendan Horner (hornerit.com)
     Purpose: Get all custom permissions entries across the entire tenant and store in csv files
     Version History:
-    --2020-02-17-Minor tweak for removing temp file only if exists
+    --2020-02-17-Minor tweak for removing temp file only if exists, fixed creation datetime values for final exports, fixed bug in full download for sorting
     --2020-02-13-Added fix for forward slashes in mailbox folder names as it becomes [char]63743 or a question mark inside a box
     --2020-02-12-Updated folderpath to show full path, added escaping of single quotes for resolving folder permissions, added sorting for folder perms
     --2020-02-11-Added documentation and a regex check for email domain to be the proper format
@@ -121,6 +121,7 @@ do{
 $LogPath = "$PSScriptRoot\TranscriptLog-GetTenantMailboxPerms.txt"
 Start-Transcript -Path $LogPath -Append
 $Timer = [System.Diagnostics.Stopwatch]::StartNew()
+$StartTime = (Get-Date)
 $TotalMailboxesProcessed = 0
 
 #Begin processing
@@ -217,15 +218,12 @@ try {
             }
         }
 
-        #Since we are resuming, there were some changes recently and so we need to deduplicate the results and create a final product, then remove the temp stuff
+        #Since we are resuming, there were some changes recently and so we need to deduplicate the results and create a final product, make sure that the Creation date/time shows the most recent creation data, then remove the temp stuff
         $NewEntries = (Import-CSV $ResumeCSVPath).Mailbox | Select-Object -Unique
         @(Import-CSV $ResumeCSVPath) + @(if(Test-Path $CustomPermsCSVPathNew){Import-CSV $CustomPermsCSVPathNew | Where-Object { $NewEntries -notcontains $_.Mailbox}}) | Sort-Object -Property Mailbox,FolderPath | Export-CSV $CustomPermsCSVPath -Force
-        if(Test-Path $TempPermsCSVPath){
-            Remove-Item $TempPermsCSVPath -Force -Confirm:$false
-        }
-        if(Test-Path $CustomPermsCSVPathNew){
-            Remove-Item $CustomPermsCSVPathNew
-        }
+        $CustomPermsCSVFile = Get-Item $CustomPermsCSVPath
+        $CustomPermsCSVFile.CreationTime = (Get-Item $ResumeCSVPath).CreationTime
+        Remove-Item $ResumeCSVPath -Force -Confirm:$false
     } elseif($ProcessNewlyCreatedOrChangedMailboxesOnly){
         #Tell the user that we are starting now and what we are doing
         $Message += " Since $DateForDelta (UTC)"
@@ -248,9 +246,11 @@ try {
         } else {
             Remove-Variable -Name "arrMailboxes"
         }
-        #Since we are resuming, there were some changes recently and so we need to deduplicate the results and create a final product, then remove the temp stuff
+        #Since we are processing only recent changes, we need to deduplicate the results and create a final product, then remove the temp stuff
         $NewEntries = (Import-CSV $CustomPermsCSVPathNew).Mailbox | Select-Object -Unique
         @(Import-CSV $CustomPermsCSVPathNew) + @(Import-Csv $CustomPermsCSVPath | Where-Object { $NewEntries -notcontains $_.Mailbox }) | Sort-Object -Property Mailbox,FolderPath | Export-CSV $CustomPermsCSVPath -Force
+        $CustomPermsCSVFile = Get-Item $CustomPermsCSVPath
+        $CustomPermsCSVFile.CreationTime = (Get-Item $CustomPermsCSVPathNew).CreationTime
         Remove-Item $CustomPermsCSVPathNew -Force
     } else {
         #We aren't resuming and we aren't processing only recently created/changed mailboxes, so this is a fresh/full download of data for the entire tenant
@@ -268,15 +268,17 @@ try {
                 Remove-Variable -Name "arrMailboxes"
                 #Since this was a fresh attempt and the Folders were added to the entries, we want to sort everything so the folders appear alongside the mailbox permissions
                 $CustomPermsCSV = Import-Csv -Path $CustomPermsCSVPath
-                $CustomPermsCSV | Sort-Object Mailbox,FolderPath | Export-CSV -Path $CustomPermsCSV -Force
+                $CustomPermsCSV | Sort-Object Mailbox,FolderPath | Export-CSV -Path $CustomPermsCSVPath -Force
             } catch {
                 throw
             }
         }
+        $CustomPermsCSVFile = Get-Item $CustomPermsCSVPath
+        $CustomPermsCSVFile.CreationTime = $StartTime
     }
 } catch {
     Write-Host "Error - $_"
-    Read-Host "$now - The command to get mailboxes or permissions stopped due to error. Sorry about that"
+    Read-Host "$(Get-Date -format filedatetime) - The command to get mailboxes or permissions stopped due to error. Sorry about that"
     Get-PSSession | Remove-PSSession
     exit
 }
