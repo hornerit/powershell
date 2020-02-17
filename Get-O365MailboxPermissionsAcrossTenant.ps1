@@ -220,7 +220,7 @@ try {
 
         #Since we are resuming, there were some changes recently and so we need to deduplicate the results and create a final product, make sure that the Creation date/time shows the most recent creation data, then remove the temp stuff
         $NewEntries = (Import-CSV $ResumeCSVPath).Mailbox | Select-Object -Unique
-        @(Import-CSV $ResumeCSVPath) + @(if(Test-Path $CustomPermsCSVPathNew){Import-CSV $CustomPermsCSVPathNew | Where-Object { $NewEntries -notcontains $_.Mailbox}}) | Sort-Object -Property Mailbox,FolderPath | Export-CSV $CustomPermsCSVPath -Force
+        @(Import-CSV $ResumeCSVPath) + @(if(Test-Path $CustomPermsCSVPathNew){Import-CSV $CustomPermsCSVPath | Where-Object { $NewEntries -notcontains $_.Mailbox}}) | Sort-Object -Property Mailbox,FolderPath | Export-CSV $CustomPermsCSVPath -Force
         $CustomPermsCSVFile = Get-Item $CustomPermsCSVPath
         $CustomPermsCSVFile.CreationTime = (Get-Item $ResumeCSVPath).CreationTime
         Remove-Item $ResumeCSVPath -Force -Confirm:$false
