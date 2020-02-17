@@ -4,6 +4,7 @@
     Created By: Brendan Horner (hornerit.com)
     Purpose: Get all custom permissions entries across the entire tenant and store in csv files
     Version History:
+    --2020-02-17-Minor tweak for removing temp file only if exists
     --2020-02-13-Added fix for forward slashes in mailbox folder names as it becomes [char]63743 or a question mark inside a box
     --2020-02-12-Updated folderpath to show full path, added escaping of single quotes for resolving folder permissions, added sorting for folder perms
     --2020-02-11-Added documentation and a regex check for email domain to be the proper format
@@ -219,7 +220,9 @@ try {
         #Since we are resuming, there were some changes recently and so we need to deduplicate the results and create a final product, then remove the temp stuff
         $NewEntries = (Import-CSV $ResumeCSVPath).Mailbox | Select-Object -Unique
         @(Import-CSV $ResumeCSVPath) + @(if(Test-Path $CustomPermsCSVPathNew){Import-CSV $CustomPermsCSVPathNew | Where-Object { $NewEntries -notcontains $_.Mailbox}}) | Sort-Object -Property Mailbox,FolderPath | Export-CSV $CustomPermsCSVPath -Force
-        Remove-Item $TempPermsCSVPath -Force -Confirm:$false
+        if(Test-Path $TempPermsCSVPath){
+            Remove-Item $TempPermsCSVPath -Force -Confirm:$false
+        }
         if(Test-Path $CustomPermsCSVPathNew){
             Remove-Item $CustomPermsCSVPathNew
         }
