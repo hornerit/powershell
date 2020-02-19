@@ -4,6 +4,7 @@
     Created By: Brendan Horner (hornerit.com)
     Purpose: Get all custom permissions entries across the entire tenant and store in csv files
     Version History:
+    --2020-02-19-Reduced the time for processing new mailboxes so that it doesn't reach so far back past the previous run.
     --2020-02-17-Minor tweak for removing temp file only if exists, fixed creation datetime values for final exports, fixed bug in full download for sorting
     --2020-02-13-Added fix for forward slashes in mailbox folder names as it becomes [char]63743 or a question mark inside a box
     --2020-02-12-Updated folderpath to show full path, added escaping of single quotes for resolving folder permissions, added sorting for folder perms
@@ -129,9 +130,9 @@ Write-Host "Retrieving Mailbox Permissions...current time is $(Get-Date -format 
 if($ProcessNewlyCreatedOrChangedMailboxesOnly -or $Resume){
     #If we are only trying to handle recent changes, we need the oldest date of the custom permissions entries between its creation and recent modifications (in case you removed an entry or something)
     if((Get-Item -Path $CustomPermsCSVPath).LastWriteTimeUtc -le ((Get-Item -Path $CustomPermsCSVPath).CreationTimeUtc) -or $UseModifiedDateForPermsDelta){
-        $DateForDelta = Get-Date (Get-Date (Get-Item -Path $CustomPermsCSVPath).LastWriteTimeUtc).AddHours(-24) -Format u
+        $DateForDelta = Get-Date (Get-Date (Get-Item -Path $CustomPermsCSVPath).LastWriteTimeUtc).AddHours(-4) -Format u
     } else {
-        $DateForDelta = Get-Date (Get-Date (Get-Item -Path $CustomPermsCSVPath).CreationTimeUtc).AddHours(-24) -Format u
+        $DateForDelta = Get-Date (Get-Date (Get-Item -Path $CustomPermsCSVPath).CreationTimeUtc).AddHours(-4) -Format u
     }
 }
 
