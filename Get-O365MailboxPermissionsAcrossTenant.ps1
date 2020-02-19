@@ -4,7 +4,7 @@
     Created By: Brendan Horner (hornerit.com)
     Purpose: Get all custom permissions entries across the entire tenant and store in csv files
     Version History:
-    --2020-02-19-Reduced the time for processing new mailboxes so that it doesn't reach so far back past the previous run.
+    --2020-02-19-Reduced the time for processing new mailboxes so that it doesn't reach so far back past the previous run. Fixed check for folderpath for resumes.
     --2020-02-17-Minor tweak for removing temp file only if exists, fixed creation datetime values for final exports, fixed bug in full download for sorting
     --2020-02-13-Added fix for forward slashes in mailbox folder names as it becomes [char]63743 or a question mark inside a box
     --2020-02-12-Updated folderpath to show full path, added escaping of single quotes for resolving folder permissions, added sorting for folder perms
@@ -151,7 +151,7 @@ try {
             #Reaching here means that we are resuming a previous resume
             $LastEntry = (import-csv $TempPermsCSVPath | Select-Object -Last 1)
             $LastMailbox = $LastEntry.Mailbox
-            if($LastEntry.FolderPath.Length -gt 1){
+            if($LastEntry.FolderPath.Length -gt 1 -or (import-csv $TempPermsCSVPath | Where-Object { $_.FolderPath.Length -gt 1}).Count -gt 0){
                 $FoldersFoundInFile = $true
             }
             if($FoldersFoundInFile){
@@ -164,7 +164,7 @@ try {
             #Reaching here means we are resuming an attempt to only process new mailboxes
             $LastEntry = import-csv $CustomPermsCSVPathNew | Select-Object -Last 1
             $LastMailbox = $LastEntry.Mailbox
-            if($LastEntry.FolderPath.Length -gt 1){
+            if($LastEntry.FolderPath.Length -gt 1 -or (import-csv $TempPermsCSVPath | Where-Object { $_.FolderPath.Length -gt 1}).Count -gt 0){
                 $FoldersFoundInFile = $true
             }
             if($FoldersFoundInFile){
@@ -177,7 +177,7 @@ try {
             #Reaching here means that we are resuming an attempt to download all mailboxes and work fresh
             $LastEntry = import-csv $CustomPermsCSVPath | Select-Object -Last 1
             $LastMailbox = $LastEntry.Mailbox
-            if($LastEntry.FolderPath.Length -gt 1){
+            if($LastEntry.FolderPath.Length -gt 1 -or (import-csv $TempPermsCSVPath | Where-Object { $_.FolderPath.Length -gt 1}).Count -gt 0){
                 $FoldersFoundInFile = $true
             }
             if($FoldersFoundInFile){
