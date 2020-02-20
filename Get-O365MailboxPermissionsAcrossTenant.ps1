@@ -4,6 +4,7 @@
     Created By: Brendan Horner (hornerit.com)
     Purpose: Get all custom permissions entries across the entire tenant and store in csv files
     Version History:
+    --2020-02-20-Added a pause before merging the final contents of files together so you can verify.
     --2020-02-19-Reduced the time for processing new mailboxes so that it doesn't reach so far back past the previous run. Fixed check for folderpath for resumes.
     --2020-02-17-Minor tweak for removing temp file only if exists, fixed creation datetime values for final exports, fixed bug in full download for sorting
     --2020-02-13-Added fix for forward slashes in mailbox folder names as it becomes [char]63743 or a question mark inside a box
@@ -220,11 +221,13 @@ try {
         }
 
         #Since we are resuming, there were some changes recently and so we need to deduplicate the results and create a final product, make sure that the Creation date/time shows the most recent creation data, then remove the temp stuff
-        $NewEntries = (Import-CSV $ResumeCSVPath).Mailbox | Select-Object -Unique
-        @(Import-CSV $ResumeCSVPath) + @(if(Test-Path $CustomPermsCSVPathNew){Import-CSV $CustomPermsCSVPath | Where-Object { $NewEntries -notcontains $_.Mailbox}}) | Sort-Object -Property Mailbox,FolderPath | Export-CSV $CustomPermsCSVPath -Force
-        $CustomPermsCSVFile = Get-Item $CustomPermsCSVPath
-        $CustomPermsCSVFile.CreationTime = (Get-Item $ResumeCSVPath).CreationTime
-        Remove-Item $ResumeCSVPath -Force -Confirm:$false
+        if((Read-Host "Run has completed. Please review file at $ResumeCSVPath before entries are merged. Ready to merge back into one file? Type 'y' and press 'enter'.") -eq "y"){
+            $NewEntries = (Import-CSV $ResumeCSVPath).Mailbox | Select-Object -Unique
+            @(Import-CSV $ResumeCSVPath) + @(if(Test-Path $CustomPermsCSVPathNew){Import-CSV $CustomPermsCSVPath | Where-Object { $NewEntries -notcontains $_.Mailbox}}) | Sort-Object -Property Mailbox,FolderPath | Export-CSV $CustomPermsCSVPath -Force
+            $CustomPermsCSVFile = Get-Item $CustomPermsCSVPath
+            $CustomPermsCSVFile.CreationTime = (Get-Item $ResumeCSVPath).CreationTime
+            Remove-Item $ResumeCSVPath -Force -Confirm:$false
+        }
     } elseif($ProcessNewlyCreatedOrChangedMailboxesOnly){
         #Tell the user that we are starting now and what we are doing
         $Message += " Since $DateForDelta (UTC)"
@@ -248,11 +251,13 @@ try {
             Remove-Variable -Name "arrMailboxes"
         }
         #Since we are processing only recent changes, we need to deduplicate the results and create a final product, then remove the temp stuff
-        $NewEntries = (Import-CSV $CustomPermsCSVPathNew).Mailbox | Select-Object -Unique
-        @(Import-CSV $CustomPermsCSVPathNew) + @(Import-Csv $CustomPermsCSVPath | Where-Object { $NewEntries -notcontains $_.Mailbox }) | Sort-Object -Property Mailbox,FolderPath | Export-CSV $CustomPermsCSVPath -Force
-        $CustomPermsCSVFile = Get-Item $CustomPermsCSVPath
-        $CustomPermsCSVFile.CreationTime = (Get-Item $CustomPermsCSVPathNew).CreationTime
-        Remove-Item $CustomPermsCSVPathNew -Force
+        if((Read-Host "Run has completed. Please review file at $CustomPermsCSVPathNew before entries are merged. Ready to merge back into one file? Type 'y' and press 'enter'.") -eq "y"){
+            $NewEntries = (Import-CSV $CustomPermsCSVPathNew).Mailbox | Select-Object -Unique
+            @(Import-CSV $CustomPermsCSVPathNew) + @(Import-Csv $CustomPermsCSVPath | Where-Object { $NewEntries -notcontains $_.Mailbox }) | Sort-Object -Property Mailbox,FolderPath | Export-CSV $CustomPermsCSVPath -Force
+            $CustomPermsCSVFile = Get-Item $CustomPermsCSVPath
+            $CustomPermsCSVFile.CreationTime = (Get-Item $CustomPermsCSVPathNew).CreationTime
+            Remove-Item $CustomPermsCSVPathNew -Force
+        }
     } else {
         #We aren't resuming and we aren't processing only recently created/changed mailboxes, so this is a fresh/full download of data for the entire tenant
         Write-Host $Message
@@ -285,7 +290,7 @@ try {
 }
 Get-PSSession | Remove-PSSession
 $Timer.Stop()
-Write-host "Done, the runtime for this entire process was"($timer.Elapsed.TotalMinutes)"minutes. Total Mailboxes processed (whether mailboxes, folders, or both): $TotalMailboxesProcessed"
+Write-host "Done, the runtime for this entire process was"($timer.Elapsed.TotalMinutes)"minutes. Total Mailboxes processed (whether mailboxes, folders, or both): $TotalMailboxesProcessed. Total Errors $($Error.Count)"
 Stop-Transcript
 Read-Host "Press any key to exit"
 exit
