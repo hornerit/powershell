@@ -64,7 +64,7 @@ function Test-ObjectId{
             }
             $ADO = Get-ADObject -Filter "proxyAddresses -eq 'smtp:$ObjectId'" -Properties UserPrincipalName
         } else {
-            $ADO = Get-ADObject -Filter "displayName -eq '$ObjectId'" -Properties UserPrincipalName -ErrorAction Stop
+            $ADO = Get-ADObject -Filter "displayName -eq '$ObjectId' -or samaccountname -eq '$ObjectId'" -Properties UserPrincipalName -ErrorAction Stop
         }
         #After retrieving, an empty resultset does not throw an error so we force one since no results were returned
         if($ADO.distinguishedName.Length -eq 0){ throw }
