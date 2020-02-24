@@ -149,27 +149,13 @@ try {
     if($Resume){
         #We need to know if we are resuming a full download, a recently-changed download, or a previous resume attempt
         $CustomPermsCSVPathNew = ($CustomPermsCSVPath.Substring(0,$CustomPermsCSVPath.LastIndexOf("."))+'-NEW.csv')
-        $TempPermsCSVPath = ($CustomPermsCSVPath.Substring(0,$CustomPermsCSVPath.LastIndexOf("."))+'-TEMP.csv')
         $ResumeCSVPath = ""
         $FoldersFoundInFile = $false
-        if(Test-Path $TempPermsCSVPath){
-            #Reaching here means that we are resuming a previous resume
-            $LastEntry = (import-csv $TempPermsCSVPath | Select-Object -Last 1)
-            $LastMailbox = $LastEntry.Mailbox
-            if($LastEntry.FolderPath.Length -gt 1 -or (import-csv $TempPermsCSVPath | Where-Object { $_.FolderPath.Length -gt 1}).Count -gt 0){
-                $FoldersFoundInFile = $true
-            }
-            if($FoldersFoundInFile){
-                $Message += "`nResuming last download...downloading mailbox folder permissions whose mailbox name attribute is after $LastMailbox and whenChangedUTC attribute after $DateForDelta from $TempPermsCSVPath"
-            } else {
-                $Message += "`nResuming last download...downloading mailboxes whose name attribute is after $LastMailbox and whenChangedUTC attribute after $DateForDelta from $TempPermsCSVPath.`nPlease note: The previous attempt did not yet have any folder permissions so it is unknown if that was desired. If you did not specify the `$IncludeFolder = `$true then you will need to run this again for folder changes."
-            }
-            $ResumeCSVPath = $TempPermsCSVPath
-        } elseif(Test-Path $CustomPermsCSVPathNew){
+        if(Test-Path $CustomPermsCSVPathNew){
             #Reaching here means we are resuming an attempt to only process new mailboxes
             $LastEntry = import-csv $CustomPermsCSVPathNew | Select-Object -Last 1
             $LastMailbox = $LastEntry.Mailbox
-            if($LastEntry.FolderPath.Length -gt 1 -or (import-csv $TempPermsCSVPath | Where-Object { $_.FolderPath.Length -gt 1}).Count -gt 0){
+            if($LastEntry.FolderPath.Length -gt 1 -or (import-csv $CustomPermsCSVPathNew | Where-Object { $_.FolderPath.Length -gt 1}).Count -gt 0){
                 $FoldersFoundInFile = $true
             }
             if($FoldersFoundInFile){
@@ -182,7 +168,8 @@ try {
             #Reaching here means that we are resuming an attempt to download all mailboxes and work fresh
             $LastEntry = import-csv $CustomPermsCSVPath | Select-Object -Last 1
             $LastMailbox = $LastEntry.Mailbox
-            if($LastEntry.FolderPath.Length -gt 1 -or (import-csv $TempPermsCSVPath | Where-Object { $_.FolderPath.Length -gt 1}).Count -gt 0){
+            $DateForDelta = Get-Date "1/1/2000" -Format u
+            if($LastEntry.FolderPath.Length -gt 1 -or (import-csv $CustomPermsCSVPath | Where-Object { $_.FolderPath.Length -gt 1}).Count -gt 0){
                 $FoldersFoundInFile = $true
             }
             if($FoldersFoundInFile){
@@ -190,7 +177,7 @@ try {
             } else {
                 $Message += "`nResuming last download...downloading mailboxes whose name attribute is after $LastMailbox and whenChangedUTC attribute after $DateForDelta from $CustomPermsCSVPath.`nPlease note: The previous attempt did not yet have any folder permissions so it is unknown if that was desired. If you did not specify the `$IncludeFolder = `$true then you will need to run this again for folder changes."
             }
-            $ResumeCSVPath = $TempPermsCSVPath
+            $ResumeCSVPath = $CustomPermsCSVPath
         }
         #Tell the user that we are starting now and what we are doing
         Write-Host $Message
