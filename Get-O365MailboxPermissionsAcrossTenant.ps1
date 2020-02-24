@@ -52,8 +52,8 @@ Import-Module ActiveDirectory
 function Test-ObjectId{
     param([string]$ObjectId)
     try {
-        #In Exchange, 'Default' is typically used on calendars to allow AvailabilityOnly to see Free/Busy info, it should not otherwise be used as it is all authenticated users
-        if($ObjectId -eq "Default"){ return "Default" }
+        #In Exchange, 'Default' is typically used on calendars to allow AvailabilityOnly to see Free/Busy info, it should not otherwise be used as it is all authenticated users. Anonymous is, well, anyone.
+        if($ObjectId -eq "Default" -or $ObjectId -eq "Anonymous"){ return $ObjectId }
         $ObjectId = $ObjectId.Replace("'","''")
         #If the object id starts with S-1-5-21, we know it is a Sid so we can ask for an ADObject filtering on ObjectSid; if it looks like an email - search by proxyAddresses, otherwise use displayname
         if($ObjectId -match "S-1-5-21"){
