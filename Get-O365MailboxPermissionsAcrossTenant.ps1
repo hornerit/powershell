@@ -4,6 +4,7 @@
     Created By: Brendan Horner (hornerit.com)
     Purpose: Get all custom permissions entries across the entire tenant and store in csv files
     Version History:
+    --2020-02-24-Added extra filters for certain mailbox folder value returns like SIDs with a NT: prefix or ExchangePublishedUser prefix.
     --2020-02-20-Added a pause before merging the final contents of files together so you can verify. Fixed error for new runs. Fixed Mailbox only runs to get objectid correctly.
     --2020-02-19-Reduced the time for processing new mailboxes so that it doesn't reach so far back past the previous run. Fixed check for folderpath for resumes.
     --2020-02-17-Minor tweak for removing temp file only if exists, fixed creation datetime values for final exports, fixed bug in full download for sorting
@@ -56,8 +57,11 @@ function Test-ObjectId{
         $ObjectId = $ObjectId.Replace("'","''")
         #If the object id starts with S-1-5-21, we know it is a Sid so we can ask for an ADObject filtering on ObjectSid; if it looks like an email - search by proxyAddresses, otherwise use displayname
         if($ObjectId -match "S-1-5-21"){
-            $ADO = Get-ADObject -Filter "objectSid -eq '$ObjectId'" -Properties UserPrincipalName -ErrorAction Stop
+            $ADO = Get-ADObject -Filter "objectSid -eq '$($ObjectId.Substring($ObjectId.IndexOf("S-1")))'" -Properties UserPrincipalName -ErrorAction Stop
         } elseif($ObjectId -match "$EmailDomain"){
+            if($ObjectId -like "ExchangePublishedUser*"){
+                $ObjectId = $ObjectId.Substring($ObjectId.IndexOf(".")+1)
+            }
             $ADO = Get-ADObject -Filter "proxyAddresses -eq 'smtp:$ObjectId'" -Properties UserPrincipalName
         } else {
             $ADO = Get-ADObject -Filter "displayName -eq '$ObjectId'" -Properties UserPrincipalName -ErrorAction Stop
@@ -269,7 +273,7 @@ try {
         }
         if($IncludeFolders){
             try{
-                $arrMailboxes | Get-EXOMailboxFolderStatistics | Where-Object { $_.SearchFolder -eq $false -and @("Root","Calendar","Inbox","User Created") -contains $_.FolderType -and (@("IPF.Note","IPF.Appointment",$null) -contains $_.ContainerClass -or $_.Name -eq "Top of Information Store")} | Select-Object @{Label="Identity";Expression={ if($_.Name -eq "Top of Information Store"){ $_.Identity.Substring(0,$_.Identity.IndexOf("\")) } else { $_.Identity.Substring(0,$_.Identity.IndexOf("\"))+':'+$_.Identity.Substring($_.Identity.IndexOf("\")).Replace([char]63743,"/")}}} | Get-EXOMailboxFolderPermission | Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity.Substring(0,$_.Identity.IndexOf(":\")))-and !($_.User -eq "Default" -and $_.AccessRights -eq "AvailabilityOnly")} | Select-Object @{Label="Mailbox";Expression={$_.Identity.Substring(0,$_.Identity.IndexOf(":\"))}},@{Label="FolderPath";Expression={if($_.FolderName -eq "Top of Information Store"){ "Top of Information Store" } else { $_.Identity.Substring($_.Identity.IndexOf(":\")+2)}}},@{Label="UserGivenAccess";Expression={Test-ObjectId -ObjectId $_.User}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Where-Object { $_.UserGivenAccess -ne ($_.Mailbox+"$EmailDomain")} | Export-CSV -Path $CustomPermsCSVPath -Append
+                $arrMailboxes | Get-EXOMailboxFolderStatistics | Where-Object { $_.SearchFolder -eq $false -and @("Root","Calendar","Inbox","User Created") -contains $_.FolderType -and (@("IPF.Note","IPF.Appointment",$null) -contains $_.ContainerClass -or $_.Name -eq "Top of Information Store")} | Select-Object @{Label="Identity";Expression={ if($_.Name -eq "Top of Information Store"){ $_.Identity.Substring(0,$_.Identity.IndexOf("\")) } else { $_.Identity.Substring(0,$_.Identity.IndexOf("\"))+':'+$_.Identity.Substring($_.Identity.IndexOf("\")).Replace([char]63743,"/")}}} | Get-EXOMailboxFolderPermission | Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity.Substring(0,$_.Identity.IndexOf(":\"))) -and !($_.User -eq "Default" -and $_.AccessRights -eq "AvailabilityOnly")} | Select-Object @{Label="Mailbox";Expression={$_.Identity.Substring(0,$_.Identity.IndexOf(":\"))}},@{Label="FolderPath";Expression={if($_.FolderName -eq "Top of Information Store"){ "Top of Information Store" } else { $_.Identity.Substring($_.Identity.IndexOf(":\")+2)}}},@{Label="UserGivenAccess";Expression={Test-ObjectId -ObjectId $_.User}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} | Where-Object { $_.UserGivenAccess -ne ($_.Mailbox+"$EmailDomain")} | Export-CSV -Path $CustomPermsCSVPath -Append
                 $TotalMailboxesProcessed += $arrMailboxes.Count
                 Remove-Variable -Name "arrMailboxes"
                 #Since this was a fresh attempt and the Folders were added to the entries, we want to sort everything so the folders appear alongside the mailbox permissions
