@@ -58,8 +58,10 @@ function Test-ObjectId{
         $ObjectId = $ObjectId.Replace("'","''")
         #If the object id starts with S-1-5-21, we know it is a Sid so we can ask for an ADObject filtering on ObjectSid; if it looks like an email - search by proxyAddresses, otherwise use displayname
         if($ObjectId -match "S-1-5-21"){
+            #Sometimes the permissions entry looks like this - NT:S-1-5-21-blahblah. So it's a SID but it begins with 'NT:' so we try to only grab the SID to resolve
             $ADO = Get-ADObject -Filter "objectSid -eq '$($ObjectId.Substring($ObjectId.IndexOf("S-1")))'" -Properties UserPrincipalName -ErrorAction Stop
         } elseif($ObjectId -match "$EmailDomain"){
+            #Some entries look like ExchangePublishedUser.someone@something.com so we grab the email afterward and try to find that
             if($ObjectId -like "ExchangePublishedUser*"){
                 $ObjectId = $ObjectId.Substring($ObjectId.IndexOf(".")+1)
             }
@@ -102,6 +104,7 @@ do{
     if($CredEntry.UserName.Length -gt 0){
         #Verify they entered an email address using a regex match
         if($CredEntry.UserName -match "^.+@.+\..+$"){
+            #If you are using MFA, we expect that this is an interactive session and you have to supply the MFA approval. Note that if you have session expiration in Azure AD conditional access policies then it will cause the script to stop/fail without reauth
             if(!($NoMFA)){
                 Write-Verbose "Attempting to MFA connect $CredEntry"
                 Connect-ExchangeOnline -UserPrincipalName $CredEntry.UserName
@@ -145,17 +148,18 @@ if($ProcessNewlyCreatedOrChangedMailboxesOnly -or $Resume){
 #Build a message to the user know the time when beginning to request mailboxes so that expectations can be managed and it's obvious how long this has run
 $Message = $(Get-Date -format filedatetime)+" Retrieving mailboxes"
 
-#Fundamental logic problem here - if a mailbox has changed recently to have permissions removed, then they simply won't be in the retrieval and there's no way to use the new commands and know enough to remove them from existing permissions entries in the CSV. Not a horrible problem because it gives extra investigation but it means data is not perfectly accurate until you run a full/fresh download.
+#Fundamental logic problem here - if a mailbox has changed recently to have permissions REMOVED, then they simply won't be in the retrieval since they may have no custom permissions and there's no way to use the new commands and know enough to remove them from existing permissions entries in the CSV. Not a horrible problem because it gives extra investigation but it means data is not perfectly accurate until you run a full/fresh download.
 try {
     if($Resume){
-        #We need to know if we are resuming a full download, a recently-changed download, or a previous resume attempt
+        #We need to know if we are resuming a full download or a recently-changed download
         $CustomPermsCSVPathNew = ($CustomPermsCSVPath.Substring(0,$CustomPermsCSVPath.LastIndexOf("."))+'-NEW.csv')
         $ResumeCSVPath = ""
         $FoldersFoundInFile = $false
         if(Test-Path $CustomPermsCSVPathNew){
-            #Reaching here means we are resuming an attempt to only process new mailboxes
+            #Reaching here means we are resuming an attempt to only process new or recently-changed mailboxes
             $LastEntry = import-csv $CustomPermsCSVPathNew | Select-Object -Last 1
             $LastMailbox = $LastEntry.Mailbox
+            #If there is a folder somewhere in the file, we will treat this as if $IncludeFolders was set to True and continue retrieving folder permissions for this resume
             if($LastEntry.FolderPath.Length -gt 1 -or (import-csv $CustomPermsCSVPathNew | Where-Object { $_.FolderPath.Length -gt 1}).Count -gt 0){
                 $FoldersFoundInFile = $true
             }
@@ -169,7 +173,9 @@ try {
             #Reaching here means that we are resuming an attempt to download all mailboxes and work fresh
             $LastEntry = import-csv $CustomPermsCSVPath | Select-Object -Last 1
             $LastMailbox = $LastEntry.Mailbox
+            #Since we are retrieving all mailboxes, we don't filter like we would for recently-changed mailboxes...to keep the command the same, we just set a really old date here so we get all mailboxes.
             $DateForDelta = Get-Date "1/1/2000" -Format u
+            #If there is a folder somewhere in the file, we will treat this as if $IncludeFolders was set to True and continue retrieving folder permissions for this resume
             if($LastEntry.FolderPath.Length -gt 1 -or (import-csv $CustomPermsCSVPath | Where-Object { $_.FolderPath.Length -gt 1}).Count -gt 0){
                 $FoldersFoundInFile = $true
             }
@@ -185,7 +191,11 @@ try {
         #Actually go get the mailbox and folder data as necessary, the first is if folders were already found in the file so it just picks up with retrieving folder permissions from mailboxes
         if($FoldersFoundInFile){
             try {
-                Get-EXOMailbox -Filter "name -ge '$LastMailbox' -and whenChangedUTC -gt '$DateForDelta'" -ResultSize Unlimited -Properties ExternalDirectoryObjectId |
+                #The filters for the FolderStatistics try to focus on normal mail/calendar folders or ones created by the user or the Top of Information Store
+                #The filters for the FolderPermission ignore when someone is blocked and make sure it is not the mailbox owner where possible and excludes the normal permissions a calendar has: Default users get AvailabilityOnly
+                #The Select-Object calculations are there in the middle to force the appropriate format needed to send to the FolderPermission command, the second Select-Object formats for file output
+                #Replacing [char]63743 is used to fix forward slashes that get interpreted as a box with a question mark in it. This will be fixed once we can use folderId instead of a path for folders
+                Get-EXOMailbox -Filter "name -ge '$LastMailbox' -and whenChangedUTC -gt '$DateForDelta'" -ResultSize $GetMailboxResultSize -Properties ExternalDirectoryObjectId |
                     Tee-Object -FilePath "$PSScriptRoot\Temp-Resume-FoldersFoundInFile-Mailboxes.txt" |
                     Get-EXOMailboxFolderStatistics |
                     Where-Object {
@@ -216,6 +226,7 @@ try {
                         @{Label="AccessRights";Expression={$_.AccessRights -join ","}} |
                     Where-Object { $_.UserGivenAccess -ne ($_.Mailbox+"$EmailDomain")} |
                     Export-CSV -Path $ResumeCSVPath -Append
+                #Grab the text file generated from Tee-Object and count the IDs so we can count how many mailboxes were processed, then remove the file
                 $TotalMailboxesProcessed += (Get-Content "$PSScriptRoot\Temp-Resume-FoldersFoundInFile-Mailboxes.txt" |
                     Where-Object { $_ -match "^ExternalDirectoryObjectId :"}).Count
                 Remove-Item "$PSScriptRoot\Temp-Resume-FoldersFoundInFile-Mailboxes.txt" -Force -Confirm:$false
@@ -225,6 +236,8 @@ try {
         } else {
             #Reaching this means no folders were found in the file so we just need to work on mailboxes and we'll check for the IncludeFolders boolean afterward
             try {
+                #The filters for MailboxPermission try to ignore inherited permissions, users who are blocked, and the mailbox owner to find truly other users with permissions
+                #The Select-Object is to format the file output
                 Get-EXOMailbox -Filter "name -ge '$LastMailbox' -and whenChangedUTC -gt '$DateForDelta'" -ResultSize Unlimited -Properties ExternalDirectoryObjectId |
                     Tee-Object -FilePath "$PSScriptRoot\Temp-Resume-NoFoldersFoundInFile-Mailboxes.txt" |
                     Get-EXOMailboxPermission -ExternalDirectoryObjectId $_.ExternalDirectoryObjectId -ResultSize Unlimited |
@@ -238,6 +251,7 @@ try {
                         @{Label="UserGivenAccess";Expression={Test-ObjectId -ObjectId $_.User}},
                         @{Label="AccessRights";Expression={$_.AccessRights -join ","}} |
                     Export-CSV -Path $ResumeCSVPath -Append
+                #Grab the text file generated from Tee-Object and count the IDs so we can count how many mailboxes were processed, then remove the file
                 $TotalMailboxesProcessed += (Get-Content "$PSScriptRoot\Temp-Resume-NoFoldersFoundInFile-Mailboxes.txt" |
                     Where-Object { $_ -match "^ExternalDirectoryObjectId :"}).Count
                 Remove-Item "$PSScriptRoot\Temp-Resume-NoFoldersFoundInFile-Mailboxes.txt" -Force -Confirm:$false
@@ -247,10 +261,17 @@ try {
             #If the script is told to include folder permissions
             if($IncludeFolders){
                 try {
+                    #The filters for the FolderStatistics try to focus on normal mail/calendar folders or ones created by the user or the Top of Information Store
+                    #The filters for the FolderPermission ignore when someone is blocked and make sure it is not the mailbox owner where possible and excludes the normal permissions a calendar has: Default users get AvailabilityOnly
+                    #The Select-Object calculations are there in the middle to force the appropriate format needed to send to the FolderPermission command, the second Select-Object formats for file output
+                    #Replacing [char]63743 is used to fix forward slashes that get interpreted as a box with a question mark in it. This will be fixed once we can use folderId instead of a path for folders
                     Get-EXOMailbox -Filter "whenChangedUTC -gt '$DateForDelta'" -ResultSize Unlimited -Properties ExternalDirectoryObjectId |
                         Tee-Object -FilePath "$PSScriptRoot\Temp-Resume-NoFoldersFoundInFile-IncludeFolders-Mailboxes.txt" |
                         Get-EXOMailboxFolderStatistics |
-                        Where-Object { $_.SearchFolder -eq $false -and @("Root","Calendar","Inbox","User Created") -contains $_.FolderType -and (@("IPF.Note","IPF.Appointment",$null) -contains $_.ContainerClass -or $_.Name -eq "Top of Information Store")} |
+                        Where-Object {
+                            $_.SearchFolder -eq $false -and
+                            @("Root","Calendar","Inbox","User Created") -contains $_.FolderType -and
+                            (@("IPF.Note","IPF.Appointment",$null) -contains $_.ContainerClass -or $_.Name -eq "Top of Information Store")} |
                         Select-Object @{Label="Identity";Expression={
                             if($_.Name -eq "Top of Information Store"){
                                 $_.Identity.Substring(0,$_.Identity.IndexOf("\"))
@@ -258,13 +279,24 @@ try {
                                 $_.Identity.Substring(0,$_.Identity.IndexOf("\"))+':'+$_.Identity.Substring($_.Identity.IndexOf("\")).Replace([char]63743,"/")
                             }}} |
                         Get-EXOMailboxFolderPermission |
-                        Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity.Substring(0,$_.Identity.IndexOf(":\"))) -and !($_.User -eq "Default" -and $_.AccessRights -eq "AvailabilityOnly")} |
+                        Where-Object {
+                            $_.AccessRights -ne "None" -and
+                            @("NT AUTHORITY\SELF") -notcontains $_.User -and
+                            $_.User -ne ($_.Identity.Substring(0,$_.Identity.IndexOf(":\"))) -and
+                            !($_.User -eq "Default" -and $_.AccessRights -eq "AvailabilityOnly")} |
                         Select-Object @{Label="Mailbox";Expression={$_.Identity.Substring(0,$_.Identity.IndexOf(":\"))}},
-                            @{Label="FolderPath";Expression={if($_.FolderName -eq "Top of Information Store"){ "Top of Information Store" } else { $_.Identity.Substring($_.Identity.IndexOf(":\")+2)}}},
+                            @{Label="FolderPath";Expression={
+                                if($_.FolderName -eq "Top of Information Store"){
+                                    "Top of Information Store"
+                                } else {
+                                    $_.Identity.Substring($_.Identity.IndexOf(":\")+2)
+                                }
+                            }},
                             @{Label="UserGivenAccess";Expression={Test-ObjectId -ObjectId $_.User}},
                             @{Label="AccessRights";Expression={$_.AccessRights -join ","}} |
                         Where-Object { $_.UserGivenAccess -ne ($_.Mailbox+"$EmailDomain")} |
                         Export-CSV -Path $ResumeCSVPath -Append    
+                    #Grab the text file generated from Tee-Object and count the IDs so we can count how many mailboxes were processed, then remove the file
                     $TotalMailboxesProcessed += (Get-Content "$PSScriptRoot\Temp-Resume-NoFoldersFoundInFile-IncludeFolders-Mailboxes.txt" |
                         Where-Object { $_ -match "^ExternalDirectoryObjectId :"}).Count
                     Remove-Item "$PSScriptRoot\Temp-Resume-NoFoldersFoundInFile-IncludeFolders-Mailboxes.txt" -Force -Confirm:$false
@@ -276,14 +308,25 @@ try {
 
         #Since we are resuming, there were some changes recently and so we need to deduplicate the results and create a final product, make sure that the Creation date/time shows the most recent creation data, then remove the temp stuff
         if((Read-Host "Run has completed. Please review file at $ResumeCSVPath before entries are merged/sorted. Ready to merge/sort ? Type 'y' and press 'enter'.") -eq "y"){
+            $NewEntries = (Import-CSV $ResumeCSVPath).Mailbox | Select-Object -Unique
             if($IncludeFolders -or $FoldersFoundInFile){
-                $NewEntries = (Import-CSV $ResumeCSVPath).Mailbox | Select-Object -Unique
+                @(Import-CSV $ResumeCSVPath) +
+                    @(if(Test-Path $CustomPermsCSVPathNew){
+                        Import-CSV $CustomPermsCSVPath | Where-Object { $NewEntries -notcontains $_.Mailbox}
+                    }) |
+                    Sort-Object -Property Mailbox,FolderPath,UserGivenAccess |
+                    Export-CSV $CustomPermsCSVPath -Force
             } else {
-                $NewEntries = (Import-CSV $ResumeCSVPath | Where-Object { $_.FolderPath.Length -eq 0 }).Mailbox | Select-Object -Unique
+                @(Import-CSV $ResumeCSVPath) +
+                    @(if(Test-Path $CustomPermsCSVPathNew){
+                        Import-CSV $CustomPermsCSVPath | Where-Object { $NewEntries -notcontains $_.Mailbox}
+                    }) +
+                    @(if(Test-Path $CustomPermsCSVPathNew){
+                        Import-CSV $CustomPermsCSVPath | Where-Object { $_.FolderPath.Length -gt 0}
+                    }) |
+                    Sort-Object -Property Mailbox,FolderPath,UserGivenAccess |
+                    Export-CSV $CustomPermsCSVPath -Force
             }
-            @(Import-CSV $ResumeCSVPath) + @(if(Test-Path $CustomPermsCSVPathNew){Import-CSV $CustomPermsCSVPath | Where-Object { $NewEntries -notcontains $_.Mailbox}}) |
-                Sort-Object -Property Mailbox,FolderPath,UserGivenAccess |
-                Export-CSV $CustomPermsCSVPath -Force
             if($ResumeCSVPath -ne $CustomPermsCSVPath){
                 $CustomPermsCSVFile = Get-Item $CustomPermsCSVPath
                 $CustomPermsCSVFile.CreationTime = (Get-Item $ResumeCSVPath).CreationTime
@@ -297,15 +340,22 @@ try {
         #Create a file called NEW to indicate this is only recently changed data. Once we get the NEW data, we deduplicate and merge into the main list of perms entries and then remove the NEW file since it was temporary
         $CustomPermsCSVPathNew = ($CustomPermsCSVPath.Substring(0,$CustomPermsCSVPath.LastIndexOf("."))+'-NEW.csv')
         try {
+            #The filters for MailboxPermission try to ignore inherited permissions, users who are blocked, and the mailbox owner to find truly other users with permissions
+            #The Select-Object is to format the file output
             Get-EXOMailbox -Filter "whenChangedUTC -gt '$DateForDelta'" -ResultSize $GetMailboxResultSize -Properties ExternalDirectoryObjectId |
                 Tee-Object -FilePath "$PSScriptRoot\TEMP-ProcessNewOnly-Mailboxes.txt" |
                 Get-EXOMailboxPermission -ExternalDirectoryObjectId $_.ExternalDirectoryObjectId -ResultSize Unlimited |
-                Where-Object { $_.IsInherited -eq $false -and $_.Deny -eq $false -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} |
+                Where-Object {
+                    $_.IsInherited -eq $false -and
+                    $_.Deny -eq $false -and
+                    @("NT AUTHORITY\SELF") -notcontains $_.User -and
+                    $_.User -ne ($_.Identity+"$EmailDomain")} |
                 Select-Object @{Label="Mailbox";Expression={$_.Identity}},
                     @{Label="FolderPath";Expression={''}},
                     @{Label="UserGivenAccess";Expression={Test-ObjectId -ObjectId $_.User}},
                     @{Label="AccessRights";Expression={$_.AccessRights -join ","}} |
                 Export-CSV -Path $CustomPermsCSVPathNew -Append
+            #Grab the text file generated from Tee-Object and keep the mailbox IDs initially for counting and then use if we need to process folders from these mailboxes
             $arrMailboxes = Get-Content "$PSScriptRoot\TEMP-ProcessNewOnly-Mailboxes.txt" |
                 Where-Object { $_ -match "^ExternalDirectoryObjectId :"} |
                 Foreach-Object { [pscustomobject]@{"ExternalDirectoryObjectId"=($_ -split ":")[1].Trim()} }
@@ -315,13 +365,39 @@ try {
         }
         if($IncludeFolders){
             try{  
+                #The filters for the FolderStatistics try to focus on normal mail/calendar folders or ones created by the user or the Top of Information Store
+                #The filters for the FolderPermission ignore when someone is blocked and make sure it is not the mailbox owner where possible and excludes the normal permissions a calendar has: Default users get AvailabilityOnly
+                #The Select-Object calculations are there in the middle to force the appropriate format needed to send to the FolderPermission command, the second Select-Object formats for file output
+                #Replacing [char]63743 is used to fix forward slashes that get interpreted as a box with a question mark in it. This will be fixed once we can use folderId instead of a path for folders
                 $arrMailboxes |
                     Get-EXOMailboxFolderStatistics |
-                    Where-Object { $_.SearchFolder -eq $false -and @("Root","Calendar","Inbox","User Created") -contains $_.FolderType -and (@("IPF.Note","IPF.Appointment",$null) -contains $_.ContainerClass -or $_.Name -eq "Top of Information Store")} |
-                    Select-Object @{Label="Identity";Expression={ if($_.Name -eq "Top of Information Store"){ $_.Identity.Substring(0,$_.Identity.IndexOf("\")) } else { $_.Identity.Substring(0,$_.Identity.IndexOf("\"))+':'+$_.Identity.Substring($_.Identity.IndexOf("\")).Replace([char]63743,"/")}}} |
+                    Where-Object {
+                        $_.SearchFolder -eq $false -and
+                        @("Root","Calendar","Inbox","User Created") -contains $_.FolderType -and
+                        (@("IPF.Note","IPF.Appointment",$null) -contains $_.ContainerClass -or $_.Name -eq "Top of Information Store")} |
+                    Select-Object @{Label="Identity";Expression={
+                        if($_.Name -eq "Top of Information Store"){
+                            $_.Identity.Substring(0,$_.Identity.IndexOf("\"))
+                        } else {
+                            $_.Identity.Substring(0,$_.Identity.IndexOf("\"))+':'+$_.Identity.Substring($_.Identity.IndexOf("\")).Replace([char]63743,"/")
+                        }
+                    }} |
                     Get-EXOMailboxFolderPermission |
-                    Where-Object { $_.AccessRights -ne "None" -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity.Substring(0,$_.Identity.IndexOf(":\"))) -and !($_.User -eq "Default" -and $_.AccessRights -eq "AvailabilityOnly")} |
-                    Select-Object @{Label="Mailbox";Expression={$_.Identity.Substring(0,$_.Identity.IndexOf(":\"))}},@{Label="FolderPath";Expression={if($_.FolderName -eq "Top of Information Store"){ "Top of Information Store" } else { $_.Identity.Substring($_.Identity.IndexOf(":\")+2)}}},@{Label="UserGivenAccess";Expression={Test-ObjectId -ObjectId $_.User}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} |
+                    Where-Object {
+                        $_.AccessRights -ne "None" -and
+                        @("NT AUTHORITY\SELF") -notcontains $_.User -and
+                        $_.User -ne ($_.Identity.Substring(0,$_.Identity.IndexOf(":\"))) -and
+                        !($_.User -eq "Default" -and $_.AccessRights -eq "AvailabilityOnly")} |
+                    Select-Object @{Label="Mailbox";Expression={$_.Identity.Substring(0,$_.Identity.IndexOf(":\"))}},
+                        @{Label="FolderPath";Expression={
+                            if($_.FolderName -eq "Top of Information Store"){
+                                "Top of Information Store"
+                            } else {
+                                $_.Identity.Substring($_.Identity.IndexOf(":\")+2)
+                            }
+                        }},
+                        @{Label="UserGivenAccess";Expression={Test-ObjectId -ObjectId $_.User}},
+                        @{Label="AccessRights";Expression={$_.AccessRights -join ","}} |
                     Where-Object { $_.UserGivenAccess -ne ($_.Mailbox+"$EmailDomain")} |
                     Export-CSV -Path $CustomPermsCSVPathNew -Append
                 $TotalMailboxesProcessed += $arrMailboxes.Count
@@ -333,15 +409,19 @@ try {
         Remove-Variable -Name "arrMailboxes"
         #Since we are processing only recent changes, we need to deduplicate the results and create a final product, then remove the temp stuff
         if((Read-Host "Run has completed. Please review file at $CustomPermsCSVPathNew before entries are merged. Ready to merge back into one file? Type 'y' and press 'enter'.") -eq "y"){
+            $NewEntries = (Import-CSV $CustomPermsCSVPathNew).Mailbox | Select-Object -Unique
             if($IncludeFolders){
-                $NewEntries = (Import-CSV $CustomPermsCSVPathNew).Mailbox | Select-Object -Unique
+                @(Import-CSV $CustomPermsCSVPathNew) +
+                    @(Import-Csv $CustomPermsCSVPath | Where-Object { $NewEntries -notcontains $_.Mailbox }) |
+                    Sort-Object -Property Mailbox,FolderPath,UserGivenAccess |
+                    Export-CSV $CustomPermsCSVPath -Force
             } else {
-                $NewEntries = (Import-CSV $CustomPermsCSVPathNew | Where-Object { $_.FolderPath.Length -eq 0 }).Mailbox | Select-Object -Unique
+                @(Import-CSV $CustomPermsCSVPathNew) +
+                    @(Import-Csv $CustomPermsCSVPath | Where-Object { $NewEntries -notcontains $_.Mailbox }) +
+                    @(Import-Csv $CustomPermsCSVPath | Where-Object { $_.FolderPath.Length -gt 0 }) |
+                    Sort-Object -Property Mailbox,FolderPath,UserGivenAccess |
+                    Export-CSV $CustomPermsCSVPath -Force
             }
-            @(Import-CSV $CustomPermsCSVPathNew) + @(Import-Csv $CustomPermsCSVPath |
-                Where-Object { $NewEntries -notcontains $_.Mailbox }) |
-                Sort-Object -Property Mailbox,FolderPath |
-                Export-CSV $CustomPermsCSVPath -Force
             $CustomPermsCSVFile = Get-Item $CustomPermsCSVPath
             $CustomPermsCSVFile.CreationTime = (Get-Item $CustomPermsCSVPathNew).CreationTime
             Remove-Item $CustomPermsCSVPathNew -Force
@@ -350,12 +430,22 @@ try {
         #We aren't resuming and we aren't processing only recently created/changed mailboxes, so this is a fresh/full download of data for the entire tenant
         Write-Host $Message
         try {
+            #The filters for MailboxPermission try to ignore inherited permissions, users who are blocked, and the mailbox owner to find truly other users with permissions
+            #The Select-Object is to format the file output
             Get-EXOMailbox -ResultSize $GetMailboxResultSize -Properties ExternalDirectoryObjectId |
                 Tee-Object -FilePath "$PSScriptRoot\TEMP-FullDownload-Mailboxes.txt" |
                 Get-EXOMailboxPermission -ExternalDirectoryObjectId $_.ExternalDirectoryObjectId -ResultSize Unlimited |
-                Where-Object { $_.IsInherited -eq $false -and $_.Deny -eq $false -and @("NT AUTHORITY\SELF") -notcontains $_.User -and $_.User -ne ($_.Identity+"$EmailDomain")} |
-                Select-Object @{Label="Mailbox";Expression={$_.Identity}},@{Label="FolderPath";Expression={''}},@{Label="UserGivenAccess";Expression={Test-ObjectId -ObjectId $_.User}},@{Label="AccessRights";Expression={$_.AccessRights -join ","}} |
+                Where-Object {
+                    $_.IsInherited -eq $false -and
+                    $_.Deny -eq $false -and
+                    @("NT AUTHORITY\SELF") -notcontains $_.User -and
+                    $_.User -ne ($_.Identity+"$EmailDomain")} |
+                Select-Object @{Label="Mailbox";Expression={$_.Identity}},
+                    @{Label="FolderPath";Expression={''}},
+                    @{Label="UserGivenAccess";Expression={Test-ObjectId -ObjectId $_.User}},
+                    @{Label="AccessRights";Expression={$_.AccessRights -join ","}} |
                 Export-CSV -Path $CustomPermsCSVPath -Force
+            #Grab the text file generated from Tee-Object and keep the mailbox IDs initially for counting and then use if we need to process folders from these mailboxes
             $arrMailboxes = Get-Content "$PSScriptRoot\TEMP-FullDownload-Mailboxes.txt" |
                 Where-Object { $_ -match "^ExternalDirectoryObjectId :"} |
                 Foreach-Object { [pscustomobject]@{"ExternalDirectoryObjectId"=($_ -split ":")[1].Trim()} }
@@ -365,18 +455,23 @@ try {
         }
         if($IncludeFolders){
             try{
+                #The filters for the FolderStatistics try to focus on normal mail/calendar folders or ones created by the user or the Top of Information Store
+                #The filters for the FolderPermission ignore when someone is blocked and make sure it is not the mailbox owner where possible and excludes the normal permissions a calendar has: Default users get AvailabilityOnly
+                #The Select-Object calculations are there in the middle to force the appropriate format needed to send to the FolderPermission command, the second Select-Object formats for file output
+                #Replacing [char]63743 is used to fix forward slashes that get interpreted as a box with a question mark in it. This will be fixed once we can use folderId instead of a path for folders
                 $arrMailboxes |
                     Get-EXOMailboxFolderStatistics |
                     Where-Object {
                         $_.SearchFolder -eq $false -and
                         @("Root","Calendar","Inbox","User Created") -contains $_.FolderType -and
                         (@("IPF.Note","IPF.Appointment",$null) -contains $_.ContainerClass -or $_.Name -eq "Top of Information Store")} |
-                    Select-Object @{
-                        Label="Identity";Expression={ if($_.Name -eq "Top of Information Store"){ $_.Identity.Substring(0,$_.Identity.IndexOf("\")) } else {
-                                $_.Identity.Substring(0,$_.Identity.IndexOf("\"))+':'+$_.Identity.Substring($_.Identity.IndexOf("\")).Replace([char]63743,"/")
-                            }
+                    Select-Object @{Label="Identity";Expression={
+                        if($_.Name -eq "Top of Information Store"){
+                            $_.Identity.Substring(0,$_.Identity.IndexOf("\"))
+                        } else {
+                            $_.Identity.Substring(0,$_.Identity.IndexOf("\"))+':'+$_.Identity.Substring($_.Identity.IndexOf("\")).Replace([char]63743,"/")
                         }
-                    } |
+                    }} |
                     Get-EXOMailboxFolderPermission |
                     Where-Object {
                         $_.AccessRights -ne "None" -and
@@ -385,7 +480,13 @@ try {
                         !($_.User -eq "Default" -and $_.AccessRights -eq "AvailabilityOnly")
                     } |
                     Select-Object @{Label="Mailbox";Expression={$_.Identity.Substring(0,$_.Identity.IndexOf(":\"))}},
-                        @{Label="FolderPath";Expression={if($_.FolderName -eq "Top of Information Store"){ "Top of Information Store" } else { $_.Identity.Substring($_.Identity.IndexOf(":\")+2)}}},
+                        @{Label="FolderPath";Expression={
+                            if($_.FolderName -eq "Top of Information Store"){
+                                "Top of Information Store"
+                            } else {
+                                $_.Identity.Substring($_.Identity.IndexOf(":\")+2)
+                            }
+                        }},
                         @{Label="UserGivenAccess";Expression={Test-ObjectId -ObjectId $_.User}},
                         @{Label="AccessRights";Expression={$_.AccessRights -join ","}} |
                     Where-Object { $_.UserGivenAccess -ne ($_.Mailbox+"$EmailDomain")} |
