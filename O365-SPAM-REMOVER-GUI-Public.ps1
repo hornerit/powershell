@@ -930,10 +930,10 @@ do {
         $Progress = ($ActionInfo.Results -split ";" |
             Where-Object { $_ -like " Item count:*" -and $_ -notlike " Item count: 0"}).count
         if ($Progress -lt $TotalRecipients2Process -and $ActionInfo.Status -ne "Completed") {
-            Write-Host ("$(Get-Date -Format u) : Current Progress for $SearchName - " +
+            Write-Host ("  $(Get-Date -Format u) : Current Progress for $($SearchName)_Purge - " +
                 "$Progress/$TotalRecipients2Process ($([int]($Progress/$TotalRecipients2Process*100))%) Complete")
         } else {
-            Write-Host "$(Get-Date -Format u) : Current Progress for $SearchName - 100% Complete"
+            Write-Host "  $(Get-Date -Format u) : Current Progress for $($SearchName)_Purge - 100% Complete"
             $CompletedSearches++
         }
     }
