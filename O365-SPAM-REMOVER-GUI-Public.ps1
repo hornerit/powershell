@@ -28,6 +28,7 @@ O365 Compliance and Security Center), supply them to this switch to ignore them 
     Created by: Brendan Horner (www.hornerit.com)
     Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
     Version History:
+    --2020-10-20-Added some fixes for ambiguous mailbox error from Compliance Search
     --2020-07-16-Added timestamp to content search name so that there wouldn't be duplicates
     --2020-06-22-New version to use modern, public exchange v2 cmdlets and use Content Search
     --2019-08-06-Bug fix for time buttons and added credential to window title for easier identification
@@ -873,11 +874,47 @@ for($i=0;$i -lt $TotalRecipients2Process;$i+=50000) {
         AllowNotFoundExchangeLocationsEnabled = $true
         ContentMatchQuery = $SearchQuery
     }
-    New-ComplianceSearch @ComplianceArgs | Start-ComplianceSearch
+    do {
+        $Good = $false
+        try {
+            New-ComplianceSearch @ComplianceArgs -ErrorAction Stop
+            $Good = $true
+        } catch {
+            $AmbiguousEntries = ([Regex]::new(".*: The location .* is ambiguous\..*")).Matches($_.exception.message)
+            if($AmbiguousEntries.Count -gt 0){
+                foreach($Entry in $AmbiguousEntries.Value.Trim()){
+                    $EmailAddress = $Entry.substring(0,$Entry.IndexOf(":"))
+                    try {
+                        $ReplacementId = (Get-User -Identity $EmailAddress).ExternalDirectoryObjectId
+                        Write-Host "Replacing $EmailAddress with $ReplacementId due to ambiguous O365 resolving"
+                    } catch {
+                        Write-Host "Removing $EmailAddress due to ambiguous error - $_"
+                    } finally {
+                        $MyRecipients.Remove($EmailAddress)
+                        if($ReplacementId.length -gt 0 -and !($MyRecipients.ContainsKey($ReplacementId))){
+                            $MyRecipients.Add($ReplacementId,$null)
+                        }
+                    }
+                }
+                $ComplianceArgs.ExchangeLocation = @($MyRecipients.Keys)[($i)..($i+49999)]
+            } else {
+                Read-Host "Error creating Compliance Search - $_. Exiting..."
+                Disconnect-ExchangeOnline -Confirm:$false | Out-Null
+                Exit
+            }
+        }
+    } until ($Good -eq $true)
+    try {
+        Start-ComplianceSearch -Identity $ComplianceArgs.Name
+    } catch {
+        Read-Host "Compliance search $SearchName created but unable to start - $_. Exiting..."
+        Disconnect-ExchangeOnline -Confirm:$false | Out-Null
+        Exit
+    }
     try {
         do {
             Start-Sleep -Seconds 5
-            Write-Host "  Checking to see if the search is completed and pausing for a few seconds if not."
+            Write-Host "  $(Get-Date -Format u) - Checking to see if the search is completed and pausing for a few seconds if not."
         } until((Get-ComplianceSearch -Identity $SearchName).Status -eq "Completed")
     } catch {
         Read-Host "Error with the compliance search status - $_"
