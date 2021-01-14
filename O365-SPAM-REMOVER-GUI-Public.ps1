@@ -919,7 +919,18 @@ for($i=0;$i -lt $TotalRecipients2Process;$i+=50000) {
     } catch {
         Read-Host "Error with the compliance search status - $_"
     }
-    New-ComplianceSearchAction -SearchName $SearchName -Purge -PurgeType HardDelete -Confirm:$false
+    try {
+        New-ComplianceSearchAction -SearchName $SearchName -Purge -PurgeType HardDelete -Confirm:$false
+    } catch {
+        if($_.exception.message -like "*A parameter cannot be found that matches*Purge*"){
+            Write-Host "You do not currently have sufficient privileges to run the Purge option. Please obtain permissions."
+            Write-Host "Once you have permissions, you can trigger the purge with this set of commands:"
+            Write-Host "Connect-IPPSSession`nNew-ComplianceSearchAction -SearchName '$SearchName' -Purge -PurgeType HardDelete -Confirm:`$false"
+            Read-Host "Copy that info and press any key to exit script..."
+            Disconnect-ExchangeOnline -Confirm:$false
+            Exit
+        }
+    }
 }
 $PauseInMinutes = 1
 do {
