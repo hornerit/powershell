@@ -28,6 +28,7 @@ O365 Compliance and Security Center), supply them to this switch to ignore them 
     Created by: Brendan Horner (www.hornerit.com)
     Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
     Version History:
+    --2021-03-18-Added more clarifying wording
     --2020-10-20-Added some fixes for ambiguous mailbox error from Compliance Search
     --2020-07-16-Added timestamp to content search name so that there wouldn't be duplicates
     --2020-06-22-New version to use modern, public exchange v2 cmdlets and use Content Search
@@ -278,8 +279,8 @@ if ($GUI -and !($NoGUI)) {
         $Reader = (New-Object System.Xml.XmlNodeReader $Xaml)
         $Window = [Windows.Markup.XamlReader]::Load($Reader)
 
-        <#Powershell variables for the controls in the GUI, this first part loads all objects from the above xaml
-            and creates powershell variables for each one with a name.#>
+        #Powershell variables for the controls in the GUI, this first part loads all objects from the above xaml
+            #and creates powershell variables for each one with a name.
         $xaml.SelectNodes("//*[@Name]") | ForEach-Object {
             try {
                 Set-Variable -Name $_.Name -Value $window.FindName($_.Name) -ErrorAction Stop
@@ -811,7 +812,7 @@ $MyRecipients = @{}
 $Page = 0
 $SearchStartDateStr = $SearchStartDate.ToString()
 $SearchEndDateStr = $SearchEndDate.ToString()
-Write-Host "Getting recipients of evil message... from $SearchStartDateStr (UTC) to $SearchEndDateStr (UTC) from $SenderList"
+Write-Host "Getting recipients of any message from $SearchStartDateStr (UTC) to $SearchEndDateStr (UTC) from $SenderList"
 #Since Message Traces cut off after 5k results, we use PageSize to limit it to 5k users and try another page of results till we run out
 $MessageTraceArgs = @{
     SenderAddress = $SenderList
@@ -827,8 +828,8 @@ do {
     $a = (Get-MessageTrace @MessageTraceArgs -Page $Page | select-object recipientaddress).recipientaddress
     Write-Host "  Done."
     if ($null -ne $a) {
-        <#For every person found in the trace, we look to make sure it is not already in the list and that it is
-            an address in the supplied domain to which we can actually do something#>
+        #For every person found in the trace, we look to make sure it is not already in the list and that it is
+            #an address in the supplied domain to which we can actually do something
         foreach($Recipient in $a) {
             if (!($MyRecipients.ContainsKey($Recipient)) -and
                 $Recipient.IndexOf("@$EmailDomain") -gt 0 -and
@@ -843,11 +844,13 @@ do {
 Write-Host Done
 
 try {
+    Write-Host "Connecting to Security and Compliance Center..."
     if ($NoMFA) {
-        Connect-IPPSSession -Credential $Cred -ErrorAction Stop
+        Connect-IPPSSession -Credential $Cred -ErrorAction Stop -WarningAction SilentlyContinue
     } else {
-        Connect-IPPSSession -UserPrincipalName $CredUPN -ErrorAction Stop
+        Connect-IPPSSession -UserPrincipalName $CredUPN -ErrorAction Stop -WarningAction SilentlyContinue
     }
+    Write-Host "Done"
 } catch {
     $ErrMsg = "Error connecting to O365 Compliance and Security Center to create content search - $_. " +
         "Press any key to exit."
@@ -877,8 +880,11 @@ for($i=0;$i -lt $TotalRecipients2Process;$i+=50000) {
     do {
         $Good = $false
         try {
+            Write-Host ("Creating a new compliance search to loop through $TotalRecipients2Process mailboxes to " +
+                "look for the evil email based on supplied parameters. If successful, its name should appear below")
             New-ComplianceSearch @ComplianceArgs -ErrorAction Stop
             $Good = $true
+            Write-Host "Done"
         } catch {
             $AmbiguousEntries = ([Regex]::new(".*: The location .* is ambiguous\..*")).Matches($_.exception.message)
             if($AmbiguousEntries.Count -gt 0){
@@ -886,9 +892,9 @@ for($i=0;$i -lt $TotalRecipients2Process;$i+=50000) {
                     $EmailAddress = $Entry.substring(0,$Entry.IndexOf(":"))
                     try {
                         $ReplacementId = (Get-User -Identity $EmailAddress).ExternalDirectoryObjectId
-                        Write-Host "Replacing $EmailAddress with $ReplacementId due to ambiguous O365 resolving"
+                        Write-Host "  Replacing $EmailAddress with $ReplacementId due to ambiguous O365 resolving"
                     } catch {
-                        Write-Host "Removing $EmailAddress due to ambiguous error - $_"
+                        Write-Host "  Removing $EmailAddress due to ambiguous error - $_"
                     } finally {
                         $MyRecipients.Remove($EmailAddress)
                         if($ReplacementId.length -gt 0 -and !($MyRecipients.ContainsKey($ReplacementId))){
@@ -905,7 +911,9 @@ for($i=0;$i -lt $TotalRecipients2Process;$i+=50000) {
         }
     } until ($Good -eq $true)
     try {
+        Write-Host "Attempting to start compliance search to find the messages..."
         Start-ComplianceSearch -Identity $ComplianceArgs.Name
+        Write-Host "Done"
     } catch {
         Read-Host "Compliance search $SearchName created but unable to start - $_. Exiting..."
         Disconnect-ExchangeOnline -Confirm:$false | Out-Null
@@ -920,7 +928,9 @@ for($i=0;$i -lt $TotalRecipients2Process;$i+=50000) {
         Read-Host "Error with the compliance search status - $_"
     }
     try {
+        Write-Host "Attempting to create a new compliance search purge action. If successful, its name should appear below:"
         New-ComplianceSearchAction -SearchName $SearchName -Purge -PurgeType HardDelete -Confirm:$false
+        Write-Host "Done"
     } catch {
         if($_.exception.message -like "*A parameter cannot be found that matches*Purge*"){
             Write-Host "You do not currently have sufficient privileges to run the Purge option. Please obtain permissions."
@@ -949,5 +959,6 @@ do {
         }
     }
 } until($CompletedSearches -eq $ContentSearchCounter)
+Write-Host "$(Get-Date -Format u) : Purge complete."
 #When done, we want to use Remove-PSSession to make sure that we properly close our powershell o365 sessions
 Disconnect-ExchangeOnline -confirm:$false
