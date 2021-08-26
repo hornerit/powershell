@@ -587,7 +587,9 @@ foreach ($recipient in $recipients) {
                     try {
                         $PostArgs.Headers."Authorization" = "Bearer $(Get-AzureToken @TokenArgs)"
                     } catch {
-                        Write-Host "$(Get-Date -format u) - Error obtaining refresh token from Azure while processing $Recipient - $_."
+                        $Msg = "$(Get-Date -format u) - Error obtaining refresh token from Azure while processing $Recipient - $_."
+                        Write-Host $Msg
+                        $Msg | Out-File -FilePath $LogPath -Append
                         Write-Host -Object $ReRunMessage
                         Read-Host "press Enter to exit."
                         Disconnect-AzAccount | Out-Null
