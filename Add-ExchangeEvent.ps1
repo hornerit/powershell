@@ -99,7 +99,7 @@ function Get-AzureToken {
             Scopes = "https://graph.microsoft.com/.default"
         }
         Write-Verbose -Message "$(Get-Date -format "yyyy-MM-ddTHH:mm:ss") - Obtaining a token from Microsoft Graph"
-        return (Get-MsalToken @GetTokenArgs).AccessToken
+        return (Get-MsalToken @GetTokenArgs -ErrorAction Stop).AccessToken
     } catch {
         $Msg = "$(Get-Date -format "yyyy-MM-ddTHH:mm:ss") - Error obtaining token from Azure - $_."
         throw $Msg
@@ -571,6 +571,7 @@ Write-Host "Beginning to post calendar events for $($recipients.count) and will 
     "$(if($GUIData.ApptStartDateTime){"`nStart - '$($GUIData.ApptStartDateTime)'`nEnd - '$($GUIData.ApptEndDateTime)"})'") |
     Out-File -FilePath $LogPath -Append
 foreach ($recipient in $recipients) {
+    Start-Sleep -Milliseconds 250
     $errorCounter = 0
     $successful = $false
     $PostArgs.Uri = "https://graph.microsoft.com/v1.0/users/$recipient/calendar/events"
@@ -597,10 +598,11 @@ foreach ($recipient in $recipients) {
         }
     } until ($successful -or $errorCounter -eq 2)
     if($errorCounter -eq 2) {
-        $Message = "$(Get-Date -format u) - Error adding event to calendar for $recipient - $_"
+        $Message = "$(Get-Date -format u) - Error adding event to calendar for $recipient - $($Error[0].exception.message)"
         Write-Host $Message
         $Message | Out-File -FilePath $LogPath -Append
     }
 }
 Disconnect-AzAccount | Out-Null
 Write-Host -Object $ReRunMessage
+Write-Host -Object "Don't forget to remove those that were successful from your CSV if you must re-run"
