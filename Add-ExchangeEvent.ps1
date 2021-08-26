@@ -486,6 +486,7 @@ try {
     Disconnect-AzAccount | Out-Null
     exit
 }
+Disconnect-AzAccount | Out-Null
 
 #For GUI, load the assembly framework
 try {
@@ -494,7 +495,6 @@ try {
     Write-Verbose -Message "$(Get-Date -format "yyyy-MM-ddTHH:mm:ss") - Done."
 } catch {
     Read-Host "GUI failed to load, unable to continue. Press enter to exit."
-    Disconnect-AzAccount | Out-Null
     exit
 }
 $GUIArgs = @{
@@ -518,7 +518,6 @@ try {
     Write-Verbose -Message "$(Get-Date -format "yyyy-MM-ddTHH:mm:ss") - Done."
 } catch {
     Read-Host "Error using the GUI or GUI was canceled - $_, press Enter to exit..."
-    Disconnect-AzAccount | Out-Null
     exit
 }
 $ReRunMessage = ("If you would like to run this script again, this is the command " +
@@ -570,6 +569,7 @@ Write-Host "Beginning to post calendar events for $($recipients.count) and will 
     "`nLocation - '$($GUIData.ApptLocation)'`nCsvFile - '$($GUIData.CSVPath)'" +
     "$(if($GUIData.ApptStartDateTime){"`nStart - '$($GUIData.ApptStartDateTime)'`nEnd - '$($GUIData.ApptEndDateTime)"})'") |
     Out-File -FilePath $LogPath -Append
+$totalErrors = 0
 foreach ($recipient in $recipients) {
     Start-Sleep -Milliseconds 250
     $errorCounter = 0
@@ -582,8 +582,8 @@ foreach ($recipient in $recipients) {
             "$(Get-Date -format u) - $recipient processed successfully." | Out-File -FilePath $LogPath -Append
         } catch {
             $errorCounter++
-            if($errorCounter -lt 2) {
-                if($_.error -like "*expired*"){
+            if ($errorCounter -lt 2) {
+                if ($_ -like "*expired*") {
                     try {
                         $PostArgs.Headers."Authorization" = "Bearer $(Get-AzureToken @TokenArgs)"
                     } catch {
@@ -592,9 +592,10 @@ foreach ($recipient in $recipients) {
                         $Msg | Out-File -FilePath $LogPath -Append
                         Write-Host -Object $ReRunMessage
                         Read-Host "press Enter to exit."
-                        Disconnect-AzAccount | Out-Null
                         exit
                     }
+                } else {
+                    Start-Sleep -Milliseconds 250
                 }
             }
         }
@@ -603,8 +604,14 @@ foreach ($recipient in $recipients) {
         $Message = "$(Get-Date -format u) - Error adding event to calendar for $recipient - $($Error[0].exception.message)"
         Write-Host $Message
         $Message | Out-File -FilePath $LogPath -Append
+        $totalErrors++
+    }
+    if ($totalErrors -gt 10) {
+        "********************************$(Get-Date -format u) - ERROR OUTPUT, TOO MANY ERRORS, SCRIPT HALTED *****************************" |
+            Out-File -FilePath $LogPath -Append
+        $Error | Out-File -FilePath $LogPath -Append
+        exit
     }
 }
-Disconnect-AzAccount | Out-Null
 Write-Host -Object $ReRunMessage
 Write-Host -Object "Don't forget to remove those that were successful from your CSV if you must re-run"
