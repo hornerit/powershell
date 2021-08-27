@@ -583,7 +583,7 @@ foreach ($recipient in $recipients) {
         } catch {
             $errorCounter++
             if ($errorCounter -lt 2) {
-                if ($_ -like "*expired*") {
+                if ($_ -like "*expired*" -or $_ -like "*unauthorized*") {
                     try {
                         $PostArgs.Headers."Authorization" = "Bearer $(Get-AzureToken @TokenArgs)"
                     } catch {
