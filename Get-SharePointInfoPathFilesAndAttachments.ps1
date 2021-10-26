@@ -34,6 +34,8 @@ OPTIONAL By default, the date filters are based on when the infopath file was cr
 	LastModified attribute of the file instead of CreatedDate. This could be useful if you are trying to include
 	forms that normally would have been created before your start date but were modified during the range of time
 	that you wish to preserve.
+.PARAMETER Credential
+OPTIONAL If downloading, you will need credentials for connecting to SharePoint. You can supply it here or via prompt
 
 .NOTES
   Created by: Brendan Horner (www.hornerit.com)
@@ -44,6 +46,7 @@ OPTIONAL By default, the date filters are based on when the infopath file was cr
   --http://chrissyblanco.blogspot.ie/2006/07/infopath-2007-file-attachment-control.html
   --https://stackoverflow.com/questions/14905396/using-powershell-to-read-modify-rewrite-sharepoint-xml-document
   Version History:
+  --2021-10-26-Added CmdletBinding() and Credential parameter
   --2021-01-26-Updated styling and documentation to fit better for more narrow screens.
   --2020-02-04-Fixed bug in file content logic that was breaking attachment extraction
   --2019-07-29-Adjusted filename logic to use appropriate encoding and added some more documentation
@@ -54,6 +57,7 @@ OPTIONAL By default, the date filters are based on when the infopath file was cr
 .EXAMPLE
 .\Get-SharePointInfoPathFilesAndAttachments.ps1
 #>
+[CmdletBinding()]
 param(
 	[string]$SiteUrl = (Read-Host "What is the url to the SharePoint SITE in question?"),
 	[string]$LibraryName = (Read-Host "What is the LIBRARY name?"),
@@ -70,7 +74,8 @@ param(
 		"This script will create a subfolder inside this path for the library and subfolders within that.")),
 	[switch]$SkipDownload,
 	[switch]$DownloadOnly,
-	[switch]$UseLastModifiedInsteadOfCreatedDate
+	[switch]$UseLastModifiedInsteadOfCreatedDate,
+	[System.Management.Automation.PSCredential]$Credential
 )
 $SiteUrl = $SiteUrl.trim().trimend("/\")
 $LibraryName = $LibraryName.trim().trimend("/\")
@@ -88,7 +93,7 @@ if (!(test-path $FilePath2 -PathType Container)) {
 }
 
 if (!($SkipDownload)) {
-	$Cred = Get-credential
+	$Cred = if ($Credential) { $Credential } else { Get-credential }
 	if ($null -eq (Get-PSSnapin "Microsoft.SharePoint.PowerShell" -ErrorAction SilentlyContinue)) {
 		try {
 			Add-PSSnapin "Microsoft.SharePoint.PowerShell"
