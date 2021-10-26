@@ -323,6 +323,16 @@ if (!($DownloadOnly)) {
 						$createFolder = 0
 					}
 					$folderName += "\"
+					#If, for some reason, the file path is longer than 260 (max for older OS's for windows), we need
+						#to truncate the filename and re-attach the extension on the end.
+					if ("$FilePath1$foldername$fileName".Length -gt 259) {
+						$currentPathLength = "$FilePath1$folderName$fileName".Length
+						#Get File extension length itself, e.g. xlsx = 4. Then add 1 for the period
+						$fileExtension = ($fileName.substring($fileName.length-5).split("."))[1]
+						#Remove a few extra characters in case the file already exists and we need to append numbers
+						$length2Remove = ($currentPathLength - 259) + $fileExtension.Length + 1 + 4
+						$fileName = "$($fileName.substring(0,($fileName.Length - $length2Remove))).$fileExtension"
+					}
 					#If the filename already exists, don't overwrite - just add a number to the end
 					if (test-path $FilePath1$folderName$fileName) {
 						$myLoop = 1
