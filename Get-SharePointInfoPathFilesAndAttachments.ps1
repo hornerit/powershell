@@ -27,7 +27,7 @@ REQUIRED Need an existing folder parent path to which the script can download or
 	subfolder for the library name (e.g. C:\temp\LibraryName\_DownloadedRawFiles)
 .PARAMETER SkipDownload
 OPTIONAL If you have previously run this script for the library or already have the files in a folder
-.PARAMETER DownloadOnly
+.PARAMETER SkipExtraction
 OPTIONAL If you wish to download the XML files and do something separately with them, use this switch
 .PARAMETER UseLastModifiedInsteadOfCreatedDate
 OPTIONAL By default, the date filters are based on when the infopath file was created. Use this switch to use
@@ -46,6 +46,7 @@ OPTIONAL If downloading, you will need credentials for connecting to SharePoint.
   --http://chrissyblanco.blogspot.ie/2006/07/infopath-2007-file-attachment-control.html
   --https://stackoverflow.com/questions/14905396/using-powershell-to-read-modify-rewrite-sharepoint-xml-document
   Version History:
+  --2022-02-16-Re-arranged SiteUrl and added char replace for xml files with nodes with invalid char
   --2021-10-26-Added CmdletBinding() and Credential parameter
   --2021-01-26-Updated styling and documentation to fit better for more narrow screens.
   --2020-02-04-Fixed bug in file content logic that was breaking attachment extraction
@@ -59,12 +60,10 @@ OPTIONAL If downloading, you will need credentials for connecting to SharePoint.
 #>
 [CmdletBinding()]
 param(
-	[string]$SiteUrl = (Read-Host "What is the url to the SharePoint SITE in question?"),
-	[string]$LibraryName = (Read-Host "What is the LIBRARY name?"),
-	[string[]]$FolderStructureNodes = ((Read-Host ("If InfoPath forms found, what data source (or sources, " +
-		"comma-separated) should be used to create folders? If the data source is actually an attribute of a " +
-		"parent data source, type the data source then add a period and type the attribute name: e.g. " +
-		"mydatasourcewithattributes.attribute5")) -split ","),
+	[string]$SiteUrl,
+	[string]$LibraryName = (Read-Host ("What is the LIBRARY name? If skipping download, what is the folder name " +
+		"that contains the '_DownloadedRawFiles' folder?")),
+	[string[]]$FolderStructureNodes,
 	[string]$StartDate = (Read-Host ("Please enter the start date for files you wish to archive. Leave empty " +
 		"for the earliest files in the library. It will assume midnight of the start date you supply. E.g. " +
 		"1/1/2010")),
@@ -73,11 +72,19 @@ param(
 	[string]$LocalDownloadPath = (Read-Host ("Please type a path to a folder in which this script will work. " +
 		"This script will create a subfolder inside this path for the library and subfolders within that.")),
 	[switch]$SkipDownload,
-	[switch]$DownloadOnly,
+	[switch]$SkipExtraction,
 	[switch]$UseLastModifiedInsteadOfCreatedDate,
 	[System.Management.Automation.PSCredential]$Credential
 )
-$SiteUrl = $SiteUrl.trim().trimend("/\")
+if (!$SkipDownload -and $SiteUrl.Length -eq 0) {
+	$SiteUrl = Read-Host "What is the url to the SharePoint SITE in question?"
+}
+if (!$SkipExtraction -and $FolderStructureNodes.Count -eq 0) {
+	$FolderStructureNodes = @((Read-Host ("If InfoPath forms found, what data source (or sources, " +
+		"comma-separated) should be used to create folders? If the data source is actually an attribute of a " +
+		"parent data source, type the data source then add a period and type the attribute name: e.g. " +
+		"mydatasourcewithattributes.attribute5")) -split ",")
+}
 $LibraryName = $LibraryName.trim().trimend("/\")
 
 #Try to create a folder locally for the file downloading
@@ -93,6 +100,7 @@ if (!(test-path $FilePath2 -PathType Container)) {
 }
 
 if (!($SkipDownload)) {
+	$SiteUrl = $SiteUrl.trim().trimend("/\")
 	$Cred = if ($Credential) { $Credential } else { Get-credential }
 	if ($null -eq (Get-PSSnapin "Microsoft.SharePoint.PowerShell" -ErrorAction SilentlyContinue)) {
 		try {
@@ -213,7 +221,7 @@ if (!($SkipDownload)) {
 	Write-Output "Total time to download (skipping filtered) source files: $($Timer.Elapsed.TotalSeconds) seconds"
 }
 
-if (!($DownloadOnly)) {
+if (!($SkipExtraction)) {
 	#Start a timer to see how long the extraction process takes
 	$Timer = [System.Diagnostics.Stopwatch]::StartNew()
 	Write-Host "All attachments will be extracted to subfolders in $FilePath1"
@@ -252,7 +260,13 @@ if (!($DownloadOnly)) {
 			$PrgPrcnt = ($LoopCounter/$LoopTotal*100)
 			Write-Progress -id 1 -activity $PrgAct -status $PrgStat -percentComplete $PrgPrcnt
 		}
-		[xml]$xml = Get-Content $file
+		#Thanks to Steve Smith for finding that some XML nodes may contain a §, which is an invalid char.
+		#Expanded this so we can add more replacement options in the future
+		try {
+			[xml]$xml = Get-Content $file
+		} catch {
+			[xml]$xml = (Get-Content $file).Replace("§","")
+		}
 		$myNodes = $xml.SelectNodes("//*")
 		$foldername = ""
 		if ($FolderStructureNodes.count -gt 0) { 
