@@ -292,12 +292,13 @@ if (!($DownloadOnly)) {
 					#When the attachment is broken into byte strings, the 20th byte tells you how many bytes are
 						#used for the filename. Multiply by 2 for Unicode encoding
 					$fileNameByteLen = $bytes[20]*2
+					#The Header is 24 bytes long for InfoPath attachments
+					$fileByteHeader=24
 					#Extract the bytes for the filename
 					$arrFileNameBytes = for ($i=0;$i -lt $fileNameByteLen;$i++) {
-						$bytes[24+$i]
+						$bytes[$fileByteHeader+$i]
 					}
-					#Determine content length by Total - Header (which is 24 bytes long) - Filename
-					$fileByteHeader=24
+					#Determine content length by Total - Header - Filename
 					$fileContentByteLen = $bytes.length-$fileByteHeader-$fileNameByteLen
 					$fileContentBytesStart = $fileByteHeader+$fileNameByteLen
 					$fileContentBytesEnd = $fileContentBytesStart+$fileContentByteLen
