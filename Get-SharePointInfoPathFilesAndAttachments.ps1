@@ -36,6 +36,10 @@ OPTIONAL By default, the date filters are based on when the infopath file was cr
 	that you wish to preserve.
 .PARAMETER Credential
 OPTIONAL If downloading, you will need credentials for connecting to SharePoint. You can supply it here or via prompt
+.PARAMETER DataToExtract
+OPTIONAL If you are extracting data from the forms, you can generate a "CSV" of XML data, "ATTACHMENTS", or "BOTH"
+.PARAMETER DateFilterIndexed
+OPTIONAL If the Created field is an indexed column (and indexing is complete), this will use the indexed column
 
 .NOTES
   Created by: Brendan Horner (www.hornerit.com)
@@ -46,6 +50,8 @@ OPTIONAL If downloading, you will need credentials for connecting to SharePoint.
   --http://chrissyblanco.blogspot.ie/2006/07/infopath-2007-file-attachment-control.html
   --https://stackoverflow.com/questions/14905396/using-powershell-to-read-modify-rewrite-sharepoint-xml-document
   Version History:
+  --2022-03-10-Added switch to filter query if the columns are indexed (avoids threshold issue), performance boost
+  --2022-03-07-Added feature for very basic extraction of data in the files to CSV
   --2022-02-16-Re-arranged SiteUrl and added char replace for xml files with nodes with invalid char
   --2021-10-26-Added CmdletBinding() and Credential parameter
   --2021-01-26-Updated styling and documentation to fit better for more narrow screens.
@@ -74,7 +80,9 @@ param(
 	[switch]$SkipDownload,
 	[switch]$SkipExtraction,
 	[switch]$UseLastModifiedInsteadOfCreatedDate,
-	[System.Management.Automation.PSCredential]$Credential
+	[System.Management.Automation.PSCredential]$Credential,
+	[Parameter(Mandatory=$true)][ValidateSet("CSV","ATTACHMENTS","BOTH")][string]$DataToExtract,
+	[switch]$DateFilterIndexed
 )
 if (!$SkipDownload -and $SiteUrl.Length -eq 0) {
 	$SiteUrl = Read-Host "What is the url to the SharePoint SITE in question?"
@@ -171,20 +179,55 @@ if (!($SkipDownload)) {
 	$Query.ViewFields = "<FieldRef Name='ID'/><FieldRef Name='LinkFilenameNoMenu'/>" +
 		"<FieldRef Name='Last_x0020_Modified'/><FieldRef Name='Created_x0020_Date'/>"
 	$Query.ViewFieldsOnly = $true
+	#If the Created or Modified date is indexed, this will set a WHERE clause to have SP filter the results before
+		#sending them to us, so we don't have to evaluate them - they are already within the date range. We can
+		#only do this because indexing allows us to bypass the list view threshold limit for those columns.
+	if ($DateFilterIndexed) {
+		Write-Host "Attempting to use CAML query to speed up processing"
+		if ($UseLastModifiedInsteadOfCreatedDate) { $FilterField = "Modified" } else { $FilterField = "Created" }
+		$Query.Query = '<Where>' +
+			$(if ($DtStartDate -ne "" -and $DtCutOffDate -ne "") {
+				'<And>'
+			}) +
+			$(if ($DtStartDate -ne "") {
+				'<Geq>' +
+					'<FieldRef Name="' + $FilterField + '" />' +
+					'<Value IncludeTimeValue="TRUE" Type="DateTime">' +
+						$(Get-Date $DtStartDate -Format "yyyy-MM-ddTHH:mm:ssZ") +
+					'</Value>' +
+				'</Geq>'
+			}) +
+			$(if ($DtCutOffDate -ne "") {
+				'<Leq>' +
+					'<FieldRef Name="' + $FilterField + '" />' +
+					'<Value IncludeTimeValue="TRUE" Type="DateTime">' +
+						$(Get-Date $DtCutOffDate -Format "yyyy-MM-ddTHH:mm:ssZ") +
+					'</Value>' +
+				'</Leq>'
+			}) +
+			$(if ($DtStartDate -ne "" -and $DtCutOffDate -ne "") {
+				'</And>'
+			}) +
+		'</Where>'
+	}
 	
 	#Looping logic - approximating the size of the library because a giant library would use all of your RAM
 		#before you could process it
 	$LoopCounter = 0
 	$LoopTotal = $List.itemcount
 	$Interval = [math]::Round($LoopTotal/20)
-	if ($Interval -lt 0) {
+	$downloadedCounter = 0
+	if ($Interval -lt 1) {
 		$Interval = 1
 	}
 	
 	#Execute the query to get the list items, get the position in case there are more than 1000 items, loop
 		#through the files, show our progress, download file
 	$PrgAct = "Step 1 of 2: Downloading Files"
-	$PrgStat = "Working on $LoopCounter of appx $LoopTotal (Updates every $Interval files processed)"
+	if ($StartDate -or $CutOffDate) {
+		$PrgAct += " (Ignoring files found outside of $StartDate-$CutOffDate)"
+	}
+	$PrgStat = "Working on $LoopCounter of up to $LoopTotal (Updates every $Interval files reviewed)"
 	$PrgPrcnt = ($LoopCounter/$LoopTotal*100)
 	Write-Progress -id 1 -activity $PrgAct -status $PrgStat -percentComplete $PrgPrcnt
 	do {
@@ -193,35 +236,90 @@ if (!($SkipDownload)) {
 		foreach ($file in $myFiles) {
 			$LoopCounter++
 			if (($LoopCounter % $Interval) -eq 0) {
-				$PrgStat = "Working on $LoopCounter of appx $LoopTotal (Updates every $Interval files processed)"
+				$PrgStat = "Working on $LoopCounter of appx $LoopTotal (Updates every $Interval files reviewed)"
 				$PrgPrcnt = ($LoopCounter/$LoopTotal*100)
 				Write-Progress -id 1 -activity $PrgAct -status $PrgStat -percentComplete $PrgPrcnt
 			}
-			if (!($UseLastModifiedInsteadOfCreatedDate)) {
-				$comparisonDate = (Get-Date -Date ($file["Created_x0020_Date"]))
-			} else {
-				$comparisonDate = (Get-Date -Date ($file["Last_x0020_Modified"]))
-			}
-			if ($DtStartDate -ne "" -and $comparisonDate -lt $DtStartDate) {
-				continue
-			}
-			if ($DtCutOffDate -ne "" -and $comparisonDate -gt $DtCutOffDate) {
-				continue
+			#If a startDate or cutoffDate is supplied, we can filter with the data comparison. Since many libraries
+				#don't have the Created and/or Modified columns as indexed columns, we cannot expect to be able to
+				#query them directly in this manner - we have to query for raw entries of the entire library and
+				#then evaluate the data being returned and THEN download the xml file
+			if (!$DateFilterIndexed) {
+				if (!($UseLastModifiedInsteadOfCreatedDate)) {
+					$comparisonDate = (Get-Date -Date ($file["Created_x0020_Date"]))
+				} else {
+					$comparisonDate = (Get-Date -Date ($file["Last_x0020_Modified"]))
+				}
+				if ($DtStartDate -ne "" -and $comparisonDate -lt $DtStartDate) {
+					continue
+				}
+				if ($DtCutOffDate -ne "" -and $comparisonDate -gt $DtCutOffDate) {
+					continue
+				}
 			}
 			$WebClient.DownloadFile($SiteUrl + "/" + $file.Url + "?NoRedirect=true",$FilePath2+$file.Name)
+			$downloadedCounter++
 		}
-		Write-Progress -id 1 -activity $PrgAct -status "Completed" -Completed
 	} while ($null -ne $Query.ListItemCollectionPosition);
+	Write-Progress -id 1 -activity $PrgAct -status "Completed" -Completed
 	
 	#Clean up the web object to prevent memory leak
 	$Web.dispose()
 	$Timer.Stop()
-	Write-Output "Download Stats:"
-	Write-Output "Total Source files (ignoring date/time filtering): $LoopTotal"
-	Write-Output "Total time to download (skipping filtered) source files: $($Timer.Elapsed.TotalSeconds) seconds"
+	Write-Output -InputObject "Download Stats:"
+	Write-Output -InputObject "Total Source files found in library: $LoopTotal"
+	Write-Output -InputObject "Total files downloaded: $downloadedCounter"
+	Write-Output -InputObject "Total time to download files: $($Timer.Elapsed.TotalSeconds) seconds"
 }
 
 if (!($SkipExtraction)) {
+	if (@("BOTH","CSV") -contains $DataToExtract) {
+		#Create a couple of functions and variables to use to take the raw XML data and create a CSV of the values
+			#CSV creation is in beta because testing needs to occur for repeating infopath fields and currently
+			#has no way of setting data types - everything is output as if it was text.
+		$outputCSVPath = "$filePath1\$LibraryName.csv"
+		function Get-ChildNodes {
+			[CmdletBinding()]
+			param(
+				[Parameter(Mandatory=$true)]$Node,
+				[Parameter(Mandatory=$true)][object]$BreadCrumbs,
+				[Parameter(Mandatory=$true)][hashtable]$FlattenedData
+			)
+			$BreadCrumbs += @("[$($Node.LocalName)]")
+			foreach ($child in $Node.ChildNodes) {
+				if ($child.HasChildNodes -and $null -eq $child.'#text') {
+					$getArgs = @{
+						FlattenedData = $flattenedData
+						BreadCrumbs = $breadCrumbs
+					} 
+					$FlattenedData,$BreadCrumbs = Get-ChildNodes -Node $child @getArgs
+				} else {
+					$key = "$($BreadCrumbs -join '')$($child.LocalName)"
+					$FlattenedData[$key] = (Get-StringOrEmpty -Node $child)
+				}
+			}
+			# remove this node from the bread crumbs
+			$BreadCrumbs = $BreadCrumbs[0..$($BreadCrumbs.Length -2)]
+			return $FlattenedData,$BreadCrumbs
+		}
+		function Get-StringOrEmpty {
+			[CmdletBinding()]
+			param(
+				[Parameter(Mandatory=$true)]$NodeText
+			)
+			if ($null -eq $NodeText.'#text') {
+				return ''
+			}
+			$text = $NodeText.'#text'.Trim()
+			if ($text.Length -gt 2000) {
+				return "See attachment"
+			}
+			return $text
+		}
+		function ConvertTo-Object ($hashTable) {
+			return New-Object PSObject -property $hashTable
+		}
+	}
 	#Start a timer to see how long the extraction process takes
 	$Timer = [System.Diagnostics.Stopwatch]::StartNew()
 	Write-Host "All attachments will be extracted to subfolders in $FilePath1"
@@ -231,6 +329,13 @@ if (!($SkipExtraction)) {
 	$MyFiles = Get-ChildItem -Path "$FilePath2\*" -Include "*.xml" -Recurse
 	if ($MyFiles.Count -eq "" -or $null -eq $MyFiles) {
 		return
+	}
+	if ("BOTH","CSV" -contains $DataToExtract) {
+		if ((Test-Path $outputCSVPath)) {
+			$OverallCsvData = Import-CSV -Path $outputCSVPath
+		} else {
+			$OverallCsvData = @()
+		}
 	}
 	$LoopCounter = 0
 	$ErrorCounter = 0
@@ -246,7 +351,7 @@ if (!($SkipExtraction)) {
 	$XmlSuffix = "']"
 
 	#Progress variables
-	$PrgAct = "Step 2 of 2: Extracting Attachments"
+	$PrgAct = "Step 2 of 2: Extracting Data and/or Attachments"
 	$PrgStat = "Working on $LoopCounter of appx $LoopTotal (Updates every $Interval files processed)"
 	$PrgPrcnt = 0
 
@@ -267,118 +372,146 @@ if (!($SkipExtraction)) {
 		} catch {
 			[xml]$xml = (Get-Content $file).Replace("§","")
 		}
-		$myNodes = $xml.SelectNodes("//*")
-		$foldername = ""
-		if ($FolderStructureNodes.count -gt 0) { 
-			for ($i=0;$i -lt $FolderStructureNodes.count;$i++) {
-				$folderNode = $FolderStructureNodes[$i].ToLower()
-				if ($folderNode.IndexOf(".") -gt 0) {
-					$tmpFolderNodeName = ($FolderNode -split "\.")[0]
-					$tmpFolderNodeAttr = ($FolderNode -split "\.")[1]
-					$nodeSearch = "$XmlPrefix$tmpFolderNodeName$XmlSuffix"
-				} else {
-					$tmpFolderNodeAttr = "innertext"
-					$nodeSearch = "$XmlPrefix$folderNode$XmlSuffix"
-				}
-				$folderXml = $xml.SelectSingleNode($nodeSearch).$tmpFolderNodeAttr
-				$folderName += ($folderXml -replace $InvalidCharsRegex,'')
-				$folderName += "-"
+		if (@("BOTH","CSV") -contains $DataToExtract) {
+			$flattenedData = @{ SrcFileName = $file.Name }
+			$breadCrumbs = @()
+			$getArgs = @{
+				Node = $xml.myFields
+				FlattenedData = $flattenedData
+				BreadCrumbs = $breadCrumbs
 			}
-			$folderName = $folderName.TrimEnd("-")
-			$folderName = $folderName -replace '`n',''
+			$flattenedData,$breadCrumbs = Get-ChildNodes @getArgs
+			$data = ConvertTo-Object -hashTable $flattenedData
+			try {
+				$OverallCsvData += @($data)
+			} catch {
+				Write-Error -Message "Unable to merge new CSV data with old in memory - $_"
+				$ErrorCounter++
+			}
 		}
-		if ($folderName -eq "" -or $null -eq $folderName -or $FolderStructureNodes.count -eq 0) {
-			$folderName = $file.BaseName
-		}
-		$createFolder = 0
-		if (!(test-path $FilePath1$folderName -PathType Container)) {
-			$createFolder = 1
-		}
-		$fileNamePrepend = $file.BaseName
-		for ($j=0;$j -lt $myNodes.Count;$j++) {
-			$b64 = $myNodes.Item($j) | select-object -ExpandProperty "#text" -ErrorAction SilentlyContinue
-			if ($b64.length -gt 2000 -and $b64.indexOf(" ") -eq -1) {
-				$b64name = $myNodes.Item($j) | select-object -ExpandProperty "name"
-				$b64name = $b64name.Substring(3)
-				$bytes = [Convert]::FromBase64String($b64)
-				if ($bytes.length -gt 0) {
-					#BYTE WORK
-					#When the attachment is broken into byte strings, the 20th byte tells you how many bytes are
-						#used for the filename. Multiply by 2 for Unicode encoding
-					$fileNameByteLen = $bytes[20]*2
-					#The Header is 24 bytes long for InfoPath attachments
-					$fileByteHeader=24
-					#Extract the bytes for the filename
-					$arrFileNameBytes = for ($i=0;$i -lt $fileNameByteLen;$i++) {
-						$bytes[$fileByteHeader+$i]
+		if (@("BOTH","ATTACHMENTS") -contains $DataToExtract) {
+			$myNodes = $xml.SelectNodes("//*")
+			$foldername = ""
+			if ($FolderStructureNodes.count -gt 0) { 
+				for ($i=0;$i -lt $FolderStructureNodes.count;$i++) {
+					$folderNode = $FolderStructureNodes[$i].ToLower()
+					if ($folderNode.IndexOf(".") -gt 0) {
+						$tmpFolderNodeName = ($FolderNode -split "\.")[0]
+						$tmpFolderNodeAttr = ($FolderNode -split "\.")[1]
+						$nodeSearch = "$XmlPrefix$tmpFolderNodeName$XmlSuffix"
+					} else {
+						$tmpFolderNodeAttr = "innertext"
+						$nodeSearch = "$XmlPrefix$folderNode$XmlSuffix"
 					}
-					#Determine content length by Total - Header - Filename
-					$fileContentByteLen = $bytes.length-$fileByteHeader-$fileNameByteLen
-					$fileContentBytesStart = $fileByteHeader+$fileNameByteLen
-					$fileContentBytesEnd = $fileContentBytesStart+$fileContentByteLen
-					#Create new array by cloning the content bytes into new array
-					$arrFileContentBytes = $bytes[($fileContentBytesStart)..($fileContentBytesEnd)]
-					$fileName = [System.Text.Encoding]::Unicode.GetString($arrFileNameBytes)
+					$folderXml = $xml.SelectSingleNode($nodeSearch).$tmpFolderNodeAttr
+					$folderName += ($folderXml -replace $InvalidCharsRegex,'')
+					$folderName += "-"
+				}
+				$folderName = $folderName.TrimEnd("-")
+				$folderName = $folderName -replace '`n',''
+			}
+			if ($folderName -eq "" -or $null -eq $folderName -or $FolderStructureNodes.count -eq 0) {
+				$folderName = $file.BaseName
+			}
+			$createFolder = 0
+			if (!(test-path $FilePath1$folderName -PathType Container)) {
+				$createFolder = 1
+			}
+			$fileNamePrepend = $file.BaseName
+			for ($j=0;$j -lt $myNodes.Count;$j++) {
+				$b64 = $myNodes.Item($j) | select-object -ExpandProperty "#text" -ErrorAction SilentlyContinue
+				if ($b64.length -gt 2000 -and $b64.indexOf(" ") -eq -1) {
+					$b64name = $myNodes.Item($j) | select-object -ExpandProperty "name"
+					$b64name = $b64name.Substring(3)
+					$bytes = [Convert]::FromBase64String($b64)
+					if ($bytes.length -gt 0) {
+						#BYTE WORK
+						#When the attachment is broken into byte strings, the 20th byte tells you how many bytes are
+							#used for the filename. Multiply by 2 for Unicode encoding
+						$fileNameByteLen = $bytes[20]*2
+						#The Header is 24 bytes long for InfoPath attachments
+						$fileByteHeader=24
+						#Extract the bytes for the filename
+						$arrFileNameBytes = for ($i=0;$i -lt $fileNameByteLen;$i++) {
+							$bytes[$fileByteHeader+$i]
+						}
+						#Determine content length by Total - Header - Filename
+						$fileContentByteLen = $bytes.length-$fileByteHeader-$fileNameByteLen
+						$fileContentBytesStart = $fileByteHeader+$fileNameByteLen
+						$fileContentBytesEnd = $fileContentBytesStart+$fileContentByteLen
+						#Create new array by cloning the content bytes into new array
+						$arrFileContentBytes = $bytes[($fileContentBytesStart)..($fileContentBytesEnd)]
+						$fileName = [System.Text.Encoding]::Unicode.GetString($arrFileNameBytes)
 
-					#PROCESSING BYTE WORK RESULTS
-					#Clean up filename to get rid of spaces and illegal characters and files with too short a name
-					$fileName = $fileName.substring(0,$fileName.length -1)
-					$fileName = $fileName.trim()
-					$fileName = $fileName -replace $InvalidCharsRegex,''
-					if ($fileName.length -lt 6) {
-						$fileName = "---"+$fileName
-					}
-					if (($fileName.indexOf(".",$fileName.length - 5)) -eq -1 -or
-					(($fileName.indexOf(".") -eq -1) -and $fileName.length -lt 5)) {
-						$fileName = "$fileName.pdf"
-					}
-					$fileName = $fileNamePrepend+$b64name+"-"+$fileName
-					if ($createFolder -eq 1) {
-						New-Item -ItemType Directory -Force -Path $FilePath1$folderName | out-null 
-						$createFolder = 0
-					}
-					$folderName += "\"
-					#If, for some reason, the file path is longer than 260 (max for older OS's for windows), we need
-						#to truncate the filename and re-attach the extension on the end. Adjusted to 255 since
-						#browser url lengths can also be affected and their original limit was 255.
-					if ("$FilePath1$foldername$fileName".Length -gt 255) {
-						$currentPathLength = "$FilePath1$folderName$fileName".Length
-						#Get File extension length itself, e.g. xlsx = 4. Then add 1 for the period
-						$fileExtension = ($fileName.substring($fileName.length-5).split("."))[1]
-						#Remove a few extra characters in case the file already exists and we need to append numbers
-						$length2Remove = ($currentPathLength - 255) + $fileExtension.Length + 1 + 4
-						$fileName = "$($fileName.substring(0,($fileName.Length - $length2Remove))).$fileExtension"
-					}
-					#If the filename already exists, don't overwrite - just add a number to the end
-					if (test-path $FilePath1$folderName$fileName) {
-						$myLoop = 1
-						$lenMin5 = $fileName.length-5
-						#This is a weird calc where we get close to the end and figure out where the . is
-						$fileNamePre = $fileName.substring(0,$lenMin5+($fileName.substring($lenMin5).indexOf(".")))
-						$fileNamePost = $fileName.trimStart($fileNamePre)
-						while (test-path $FilePath1$folderName$fileName) {
-							$fileName = $fileNamePre+"("+$myLoop+")"+$fileNamePost
-							$myLoop++
+						#PROCESSING BYTE WORK RESULTS
+						#Clean up filename to get rid of spaces and illegal characters and files with too short a name
+						$fileName = $fileName.substring(0,$fileName.length -1)
+						$fileName = $fileName.trim()
+						$fileName = $fileName -replace $InvalidCharsRegex,''
+						if ($fileName.length -lt 6) {
+							$fileName = "---"+$fileName
+						}
+						if (($fileName.indexOf(".",$fileName.length - 5)) -eq -1 -or
+						(($fileName.indexOf(".") -eq -1) -and $fileName.length -lt 5)) {
+							$fileName = "$fileName.pdf"
+						}
+						$fileName = $fileNamePrepend+$b64name+"-"+$fileName
+						if ($createFolder -eq 1) {
+							New-Item -ItemType Directory -Force -Path $FilePath1$folderName | out-null 
+							$createFolder = 0
+						}
+						$folderName += "\"
+						#If, for some reason, the file path is longer than 260 (max for older OS's for windows), we need
+							#to truncate the filename and re-attach the extension on the end. Adjusted to 255 since
+							#browser url lengths can also be affected and their original limit was 255.
+						if ("$FilePath1$foldername$fileName".Length -gt 255) {
+							$currentPathLength = "$FilePath1$folderName$fileName".Length
+							#Get File extension length itself, e.g. xlsx = 4. Then add 1 for the period
+							$fileExtension = ($fileName.substring($fileName.length-5).split("."))[1]
+							#Remove a few extra characters in case the file already exists and we need to append numbers
+							$length2Remove = ($currentPathLength - 255) + $fileExtension.Length + 1 + 4
+							$fileName = "$($fileName.substring(0,($fileName.Length - $length2Remove))).$fileExtension"
+						}
+						#If the filename already exists, don't overwrite - just add a number to the end
+						if (test-path $FilePath1$folderName$fileName) {
+							$myLoop = 1
+							$lenMin5 = $fileName.length-5
+							#This is a weird calc where we get close to the end and figure out where the . is
+							$fileNamePre = $fileName.substring(0,$lenMin5+($fileName.substring($lenMin5).indexOf(".")))
+							$fileNamePost = $fileName.trimStart($fileNamePre)
+							while (test-path $FilePath1$folderName$fileName) {
+								$fileName = $fileNamePre+"("+$myLoop+")"+$fileNamePost
+								$myLoop++
+							}
+						}
+						#Final step - save the document to the local computer
+						try {
+							[IO.File]::WriteAllBytes($FilePath1+$folderName+$fileName,$arrFileContentBytes)
+							$FilesExtracted++
+						} catch {
+							Write-Host ("Error saving file. Attempted data: Foldername = $foldername. Filename = " +
+								"$filename. Source File = $fileNamePrepend")
+							$fileErrorCounter++
 						}
 					}
-					#Final step - save the document to the local computer
-					try {
-						[IO.File]::WriteAllBytes($FilePath1+$folderName+$fileName,$arrFileContentBytes)
-						$FilesExtracted++
-					} catch {
-						Write-Host ("Error saving file. Attempted data: Foldername = $foldername. Filename = " +
-							"$filename. Source File = $fileNamePrepend")
-						$fileErrorCounter++
-					}
 				}
 			}
+			if ($fileErrorCounter -gt 0) { $ErrorCounter++; $FileErrorTotal++ }
 		}
-		if ($fileErrorCounter -gt 0) { $ErrorCounter++; $FileErrorTotal++ }
+	}
+	if ("CSV","BOTH" -contains $DataToExtract) {
+		try {
+			$OverallCsvData | Export-CSV $outputCSVPath -Force -NoTypeInformation
+		} catch {
+			Write-Error -Message "Unable to create or overwrite CSV at $outputCSVPath - $_"
+		}
 	}
 	Write-Progress -id 1 -activity $PrgAct -status "Completed" -Completed
 	Write-Output "Error stats: $ErrorCounter attachments failed to be extracted from $FileErrorTotal files"
 	Write-Output "Extraction stats:"
-	Write-Output "Total attachments extracted: $FilesExtracted (from appx $LoopTotal InfoPath source files)"
-	Write-Output "Total time to extract attachments: $($Timer.Elapsed.TotalSeconds) seconds"
+	if (@("BOTH","ATTACHMENTS") -contains $DataToExtract) {
+		Write-Output "Total attachments extracted: $FilesExtracted (from appx $LoopTotal InfoPath source files)"
+	}
+	Write-Output "Total time to extract data/attachments: $($Timer.Elapsed.TotalSeconds) seconds"
 }
 Read-Host "Please press enter to close"
