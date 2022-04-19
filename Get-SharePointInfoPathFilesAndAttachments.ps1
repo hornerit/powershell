@@ -49,6 +49,8 @@ OPTIONAL If the Created field is an indexed column (and indexing is complete), t
   --https://sharepoint.stackexchange.com/questions/222076/reading-and-writing-xml-in-form-library-with-powershell
   --http://chrissyblanco.blogspot.ie/2006/07/infopath-2007-file-attachment-control.html
   --https://stackoverflow.com/questions/14905396/using-powershell-to-read-modify-rewrite-sharepoint-xml-document
+  --https://docs.microsoft.com/en-us/previous-versions/office/troubleshoot/office-developer/
+  		encode-and-decode-attachment-using-visual-c-in-infopath-2010
   Version History:
   --2022-04-19-Adjusted filename calculation to correct for images in picture/attachment controls with no name as
 		this causes there to be no byte header for the file and thus byte 20 does not contain the filename length.
@@ -433,7 +435,8 @@ if (!($SkipExtraction)) {
 						#When the attachment is broken into byte strings, the 20th byte tells you how many bytes are
 							#used for the filename. Multiply by 2 for Unicode encoding
 						$fileNameByteLen = $bytes[20]*2
-						if ($fileNameByteLen -eq 0) {
+						#Test whether the file has an infopath file attachment header. If not, all base64 = content
+						if ($bytes[0] -eq 199 -and $bytes[1] -eq 73 -and $bytes[2] -eq 70 -and $bytes[3] -eq 65) {
 							$fileByteHeader = 0
 							$arrFileNameBytes = $null
 							$fileName = "uploadedImage.jpg"
