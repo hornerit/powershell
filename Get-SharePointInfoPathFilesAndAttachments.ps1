@@ -442,6 +442,7 @@ if (!($SkipExtraction)) {
 							$fileByteHeader = 0
 							$arrFileNameBytes = $null
 							$fileName = "uploadedImage.jpg"
+							$arrFileContentBytes = $bytes
 						} else {
 							#The Header is 24 bytes long for InfoPath attachments
 							$fileByteHeader=24
@@ -458,13 +459,13 @@ if (!($SkipExtraction)) {
 								continue
 							}
 							$fileName = $fileName.substring(0,$fileName.length -1)
+							#Determine content length by Total - Header - Filename
+							$fileContentByteLen = $bytes.length-$fileByteHeader-$fileNameByteLen
+							$fileContentBytesStart = $fileByteHeader+$fileNameByteLen
+							$fileContentBytesEnd = $fileContentBytesStart+$fileContentByteLen
+							#Create new array by cloning the content bytes into new array
+							$arrFileContentBytes = $bytes[($fileContentBytesStart)..($fileContentBytesEnd)]
 						}
-						#Determine content length by Total - Header - Filename
-						$fileContentByteLen = $bytes.length-$fileByteHeader-$fileNameByteLen
-						$fileContentBytesStart = $fileByteHeader+$fileNameByteLen
-						$fileContentBytesEnd = $fileContentBytesStart+$fileContentByteLen
-						#Create new array by cloning the content bytes into new array
-						$arrFileContentBytes = $bytes[($fileContentBytesStart)..($fileContentBytesEnd)]
 
 						#PROCESSING BYTE WORK RESULTS
 						#Clean up filename to get rid of spaces and illegal characters and files with too short a name
