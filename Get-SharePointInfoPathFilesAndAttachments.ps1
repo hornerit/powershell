@@ -50,6 +50,10 @@ OPTIONAL If the Created field is an indexed column (and indexing is complete), t
   --http://chrissyblanco.blogspot.ie/2006/07/infopath-2007-file-attachment-control.html
   --https://stackoverflow.com/questions/14905396/using-powershell-to-read-modify-rewrite-sharepoint-xml-document
   Version History:
+  --2022-04-19-Adjusted filename calculation to correct for images in picture/attachment controls with no name as
+		this causes there to be no byte header for the file and thus byte 20 does not contain the filename length.
+		There are no other identifying markers that I can see for direct image uploads so there is still potential
+		that they could be missed or incorrectly converted.
   --2022-03-10-Added switch to filter query if the columns are indexed (avoids threshold issue), performance boost
   --2022-03-07-Added feature for very basic extraction of data in the files to CSV
   --2022-02-16-Re-arranged SiteUrl and added char replace for xml files with nodes with invalid char
@@ -420,7 +424,7 @@ if (!($SkipExtraction)) {
 			$fileNamePrepend = $file.BaseName
 			for ($j=0;$j -lt $myNodes.Count;$j++) {
 				$b64 = $myNodes.Item($j) | select-object -ExpandProperty "#text" -ErrorAction SilentlyContinue
-				if ($b64.length -gt 2000 -and $b64.indexOf(" ") -eq -1) {
+				if ($b64.length -gt 500 -and $b64.indexOf(" ") -eq -1) {
 					$b64name = $myNodes.Item($j) | select-object -ExpandProperty "name"
 					$b64name = $b64name.Substring(3)
 					$bytes = [Convert]::FromBase64String($b64)
@@ -429,11 +433,25 @@ if (!($SkipExtraction)) {
 						#When the attachment is broken into byte strings, the 20th byte tells you how many bytes are
 							#used for the filename. Multiply by 2 for Unicode encoding
 						$fileNameByteLen = $bytes[20]*2
-						#The Header is 24 bytes long for InfoPath attachments
-						$fileByteHeader=24
-						#Extract the bytes for the filename
-						$arrFileNameBytes = for ($i=0;$i -lt $fileNameByteLen;$i++) {
-							$bytes[$fileByteHeader+$i]
+						if ($fileNameByteLen -eq 0) {
+							$fileByteHeader = 0
+							$arrFileNameBytes = $null
+							$fileName = "uploadedImage.jpg"
+						} else {
+							#The Header is 24 bytes long for InfoPath attachments
+							$fileByteHeader=24
+							#Extract the bytes for the filename
+							$arrFileNameBytes = for ($i=0;$i -lt $fileNameByteLen;$i++) {
+								$bytes[$fileByteHeader+$i]
+							}
+							try {
+								$fileName = [System.Text.Encoding]::Unicode.GetString($arrFileNameBytes)
+							} catch {
+								Write-Host ("Error extracting attachment. Attempted data: FieldName = $b64name. " +
+									"Source File = $fileNamePrepend")
+								$fileErrorCounter++
+								continue
+							}
 						}
 						#Determine content length by Total - Header - Filename
 						$fileContentByteLen = $bytes.length-$fileByteHeader-$fileNameByteLen
@@ -441,7 +459,6 @@ if (!($SkipExtraction)) {
 						$fileContentBytesEnd = $fileContentBytesStart+$fileContentByteLen
 						#Create new array by cloning the content bytes into new array
 						$arrFileContentBytes = $bytes[($fileContentBytesStart)..($fileContentBytesEnd)]
-						$fileName = [System.Text.Encoding]::Unicode.GetString($arrFileNameBytes)
 
 						#PROCESSING BYTE WORK RESULTS
 						#Clean up filename to get rid of spaces and illegal characters and files with too short a name
@@ -496,7 +513,7 @@ if (!($SkipExtraction)) {
 					}
 				}
 			}
-			if ($fileErrorCounter -gt 0) { $ErrorCounter++; $FileErrorTotal++ }
+			if ($fileErrorCounter -gt 0) { $ErrorCounter += $fileErrorCounter; $FileErrorTotal++ }
 		}
 	}
 	if ("CSV","BOTH" -contains $DataToExtract) {
