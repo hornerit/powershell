@@ -438,7 +438,7 @@ if (!($SkipExtraction)) {
 							#used for the filename. Multiply by 2 for Unicode encoding
 						$fileNameByteLen = $bytes[20]*2
 						#Test whether the file has an infopath file attachment header. If not, all base64 = content
-						if ($bytes[0] -ne 199 -and $bytes[1] -ne 73 -and $bytes[2] -ne 70 -and $bytes[3] -ne 65) {
+						if ($bytes[0] -ne 199 -or $bytes[1] -ne 73 -or $bytes[2] -ne 70 -or $bytes[3] -ne 65) {
 							$fileByteHeader = 0
 							$arrFileNameBytes = $null
 							$fileName = "uploadedImage.jpg"
