@@ -52,10 +52,12 @@ OPTIONAL If the Created field is an indexed column (and indexing is complete), t
   --https://docs.microsoft.com/en-us/previous-versions/office/troubleshoot/office-developer/
   		encode-and-decode-attachment-using-visual-c-in-infopath-2010
   Version History:
-  --2022-04-19-Adjusted filename calculation to correct for images in picture/attachment controls with no name as
-		this causes there to be no byte header for the file and thus byte 20 does not contain the filename length.
-		There are no other identifying markers that I can see for direct image uploads so there is still potential
-		that they could be missed or incorrectly converted.
+  --2022-04-19-Adjusted filename calculation evaluate the first 4 bytes of the base64 string. According to MS,
+  		the 'signature' of an InfoPath form attachment is the first 4 bytes equaling 199,73,70,65. If that exists,
+		then the file is a proper attachment with a header and filename. If not, the raw string is likely an image
+		that was pasted directly or built into the infopath form template. Additionally, there is a double null
+		at the end as a terminator between the header + filename and the content of a proper attachment, hence the
+		need to trim it.
   --2022-03-10-Added switch to filter query if the columns are indexed (avoids threshold issue), performance boost
   --2022-03-07-Added feature for very basic extraction of data in the files to CSV
   --2022-02-16-Re-arranged SiteUrl and added char replace for xml files with nodes with invalid char
@@ -455,6 +457,7 @@ if (!($SkipExtraction)) {
 								$fileErrorCounter++
 								continue
 							}
+							$fileName = $fileName.substring(0,$fileName.length -1)
 						}
 						#Determine content length by Total - Header - Filename
 						$fileContentByteLen = $bytes.length-$fileByteHeader-$fileNameByteLen
@@ -465,10 +468,6 @@ if (!($SkipExtraction)) {
 
 						#PROCESSING BYTE WORK RESULTS
 						#Clean up filename to get rid of spaces and illegal characters and files with too short a name
-						if ([string]::IsNullOrEmpty($fileName[$($fileName.length - 1)]) -or
-						$fileName[$($fileName.length - 1)] -eq " "){
-							$fileName = $fileName.substring(0,$fileName.length -1)
-						}
 						$fileName = $fileName.trim()
 						$fileName = $fileName -replace $InvalidCharsRegex,''
 						if ($fileName.length -lt 6) {
