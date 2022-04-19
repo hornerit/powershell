@@ -463,7 +463,6 @@ if (!($SkipExtraction)) {
 						#PROCESSING BYTE WORK RESULTS
 						#Clean up filename to get rid of spaces and illegal characters and files with too short a name
 						if ([string]::IsNullOrEmpty($fileName[$($fileName.length - 1)]) -or
-						[string]::IsNullOrWhiteSpace($fileName[$($fileName.length - 1)]) -or
 						$fileName[$($fileName.length - 1)] -eq " "){
 							$fileName = $fileName.substring(0,$fileName.length -1)
 						}
