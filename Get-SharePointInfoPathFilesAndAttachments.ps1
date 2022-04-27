@@ -37,7 +37,7 @@ OPTIONAL By default, the date filters are based on when the infopath file was cr
 .PARAMETER Credential
 OPTIONAL If downloading, you will need credentials for connecting to SharePoint. You can supply it here or via prompt
 .PARAMETER DataToExtract
-OPTIONAL If you are extracting data from the forms, you can generate a "CSV" of XML data, "ATTACHMENTS", or "BOTH"
+REQUIRED If you are extracting data from the forms, you can generate a "CSV" of XML data, "ATTACHMENTS", or "BOTH"
 .PARAMETER DateFilterIndexed
 OPTIONAL If the Created field is an indexed column (and indexing is complete), this will use the indexed column
 
