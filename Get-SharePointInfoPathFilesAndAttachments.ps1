@@ -52,6 +52,9 @@ OPTIONAL If the Created field is an indexed column (and indexing is complete), t
   --https://docs.microsoft.com/en-us/previous-versions/office/troubleshoot/office-developer/
   		encode-and-decode-attachment-using-visual-c-in-infopath-2010
   Version History:
+  --2022-05-12-Adjusted how the final CSV output is generated so that it properly merges all fields found in all
+		xml files retrieved in a library before exporting instead of using the first file as the master template
+		for all fields being exported as some infopath form templates changed over time without relinking.
   --2022-04-19-Adjusted filename calculation evaluate the first 4 bytes of the base64 string. According to MS,
   		the 'signature' of an InfoPath form attachment is the first 4 bytes equaling 199,73,70,65. If that exists,
 		then the file is a proper attachment with a header and filename. If not, the raw string is likely an image
@@ -327,6 +330,27 @@ if (!($SkipExtraction)) {
 		function ConvertTo-Object ($hashTable) {
 			return New-Object PSObject -property $hashTable
 		}
+		function Invoke-NormalizeHashTables {
+			[CmdletBinding()]
+			param(
+				[ref]$hashTables
+			)
+			$hashSet = New-Object -TypeName 'System.Collections.Generic.HashSet[string]'
+			foreach ($ht in $hashTables.Value) {
+				foreach ($key in $ht.Keys) {
+					if (!($hashSet.Contains($key))) {
+						$hashSet.Add($key) | Out-Null
+					}
+				}
+			}
+			foreach ($ht in $hashTables.Value) {
+				foreach ($key in $hashSet.GetEnumerator()) {
+					if (!($ht.ContainsKey($key))) {
+						$ht.Add($key, "")
+					}
+				}
+			}
+		}
 	}
 	#Start a timer to see how long the extraction process takes
 	$Timer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -389,9 +413,8 @@ if (!($SkipExtraction)) {
 				BreadCrumbs = $breadCrumbs
 			}
 			$flattenedData,$breadCrumbs = Get-ChildNodes @getArgs
-			$data = ConvertTo-Object -hashTable $flattenedData
 			try {
-				$OverallCsvData += @($data)
+				$OverallCsvData += @($flattenedData)
 			} catch {
 				Write-Error -Message "Unable to merge new CSV data with old in memory - $_"
 				$ErrorCounter++
@@ -524,7 +547,9 @@ if (!($SkipExtraction)) {
 	}
 	if ("CSV","BOTH" -contains $DataToExtract) {
 		try {
-			$OverallCsvData | Export-CSV $outputCSVPath -Force -NoTypeInformation
+			Invoke-NormalizeHashTables -hashTables ([ref]$OverallCsvData)
+			$OverallCsvData | foreach-object { ConvertTo-Object -hashTable $_ } |
+				Export-CSV $outputCSVPath -Force -NoTypeInformation
 		} catch {
 			Write-Error -Message "Unable to create or overwrite CSV at $outputCSVPath - $_"
 		}
