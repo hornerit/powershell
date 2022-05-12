@@ -451,7 +451,11 @@ if (!($SkipExtraction)) {
 			$fileNamePrepend = $file.BaseName
 			for ($j=0;$j -lt $myNodes.Count;$j++) {
 				$b64 = $myNodes.Item($j) | select-object -ExpandProperty "#text" -ErrorAction SilentlyContinue
-				if ($b64.length -gt 100 -and $b64.indexOf(" ") -eq -1 -and ($b64.length % 4) -eq 0) {
+				if ($b64.length -gt 100 -and 
+				$b64.indexOf(" ") -eq -1 -and
+				($b64.length % 4) -eq 0 -and
+				$b64 -notlike "http://*" -and
+				$b64 -notlike "https://*") {
 					$b64name = $myNodes.Item($j) | select-object -ExpandProperty "name"
 					$b64name = $b64name.Substring(3)
 					$bytes = [Convert]::FromBase64String($b64)
