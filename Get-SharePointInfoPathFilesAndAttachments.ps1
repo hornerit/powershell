@@ -322,7 +322,11 @@ if (!($SkipExtraction)) {
 				return ''
 			}
 			$text = $NodeText.'#text'.Trim()
-			if ($text.Length -gt 100 -and $text.IndexOf(" ") -eq -1 -and ($text.length % 4) -eq 0) {
+			if ($text.Length -gt 100 -and
+			$text.IndexOf(" ") -eq -1 -and
+			($text.length % 4) -eq 0 -and
+			$text -notlike "http://*" -and
+			$text -notlike "https://*") {
 				return "See attachment"
 			}
 			return $text
@@ -417,6 +421,7 @@ if (!($SkipExtraction)) {
 			} catch {
 				Write-Error -Message ("$(Get-Date -format u) - Error extracting child nodes for " +
 					"$($flattenedData.SrcFileName) - $($_.exception.message)")
+				$ErrorCounter++
 			}
 			try {
 				$OverallCsvData += @($flattenedData)
