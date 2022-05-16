@@ -412,7 +412,12 @@ if (!($SkipExtraction)) {
 				FlattenedData = $flattenedData
 				BreadCrumbs = $breadCrumbs
 			}
-			$flattenedData,$breadCrumbs = Get-ChildNodes @getArgs
+			try {
+				$flattenedData,$breadCrumbs = Get-ChildNodes @getArgs
+			} catch {
+				Write-Error -Message ("$(Get-Date -format u) - Error extracting child nodes for " +
+					"$($flattenedData.SrcFileName) - $($_.exception.message)")
+			}
 			try {
 				$OverallCsvData += @($flattenedData)
 			} catch {
