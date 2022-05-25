@@ -55,6 +55,7 @@ OPTIONAL Path to a CSV that contains a column for EmailAddress and there's a non
 .NOTES
     Author: Brendan Horner (MIT)
     Version History:
+    --2022-05-25-Shifted logic to make Body an optional element for testing, also updated some styling
     --2021-08-25-Updated output and added more data to the log file. Fixed horizontal scroll bar for Body field
     --2021-03-16-Re-arranged functions, added function for getting Azure token
     --2020-12-14-Initial version with a GUI and uses Graph API for the process to support modern auth.
@@ -195,8 +196,7 @@ function Resolve-RequiredInputs {
     $ShowApptAsDropdown.SelectedIndex -ne -1 -and
     $ReminderNumberOfMinutes.Text -match "\d+" -and
     $ApptSubject.Text.Length -gt 0 -and
-    $ApptLocation.Text.Length -gt 0 -and
-    $ApptBody.Text.Length -gt 0) {
+    $ApptLocation.Text.Length -gt 0) {
         $BtnSubmit.Content="Begin Calendar Injection"
         $BtnSubmit.IsEnabled = $true
     } else {
@@ -294,7 +294,7 @@ function Get-GUIData {
                     <ComboBox x:Name="ShowApptAsDropdown" Height="25" Width="150" VerticalAlignment="Center"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal">
-                    <Label>How many MINUTES before Appt Start does should reminder appear?</Label>
+                    <Label>How many MINUTES before Appt Start should reminder appear?</Label>
                     <TextBox x:Name="ReminderNumberOfMinutes" Width="30" $(if($reminderMinutesBeforeStart -gt 0){ 'Text="'+$reminderMinutesBeforeStart+'"' })/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal">
@@ -455,7 +455,7 @@ function Get-GUIData {
         ApptEndDateTime = $EndDateTime
         ApptSubject = $ApptSubject.Text
         ApptLocation = $ApptLocation.Text
-        ApptBody = $ApptBody.Text
+        ApptBody = $(if ($null -ne $ApptBody.Text -and $ApptBody.Text.Length -gt 1) { $ApptBody.Text } else { $null })
         ShowApptAs = $ShowApptAsDropdown.SelectedValue
         ApptReminder = [int]$ReminderNumberOfMinutes.Text
     }
@@ -525,7 +525,7 @@ $ReRunMessage = ("If you would like to run this script again, this is the comman
     "-ReminderMinutesBeforeStart $($GUIData.ApptReminder) -ShowAs '$($GUIData.ShowApptAs)' " +
     "-Location '$($GUIData.ApptLocation)' -CsvFile '$($GUIData.CSVPath)'" +
     "$(if($GUIData.ApptStartDateTime){" -Start '$($GUIData.ApptStartDateTime)' -End '$($GUIData.ApptEndDateTime)"})'")
-$PostBody = @{
+$postBodyHash = @{
     start = @{
         dateTime=$GUIData.ApptStartDateTime.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss")
         timeZone="UTC"
@@ -538,14 +538,19 @@ $PostBody = @{
     location = @{
         displayname=$GUIData.ApptLocation
     }
-    body = @{
-        contentType = "HTML"
-        content = $GUIData.ApptBody
-    }
     showAs = $GUIData.ShowApptAs
     reminderMinutesBeforeStart = $GUIData.ApptReminder
     isReminderOn = "true"
-} | ConvertTo-Json | foreach-object {
+}
+if ($null -ne $GUIData.ApptBody) {
+    $postBodyHash."body" = @{
+        contentType = "HTML"
+        content = $GUIData.ApptBody
+    }
+}
+#This next line is to take any special characters entered in the textbox for the body message as they get auto
+    #converted to \\uXXXX as, I believe, an xml code. Using this converts the \\uXXXX to its actual character value
+$postBody = $postBodyHash | ConvertTo-Json | foreach-object {
     [Regex]::Replace($_, "\\u(?<Value>[a-zA-Z0-9]{4})", {
         param($m) ([char]([int]::Parse($m.Groups['Value'].Value,
             [System.Globalization.NumberStyles]::HexNumber))).ToString() 
@@ -561,16 +566,16 @@ $PostArgs = @{
         "Accept" = "application/json, text/plain"
     }
 }
-$recipients = @((import-csv $GUIData.CSVPath).EmailAddress | Sort-Object)
-Write-Host "Beginning to post calendar events for $($recipients.count) and will log progress in $LogPath"
-("**************$(Get-Date -format u) - Beginning to post calendar events for $($recipients.Count) mailboxes " +
+$Recipients = @((import-csv $GUIData.CSVPath).EmailAddress | Sort-Object)
+Write-Host "Beginning to post calendar events for $($Recipients.count) and will log progress in $LogPath"
+("**************$(Get-Date -format u) - Beginning to post calendar events for $($Recipients.Count) mailboxes " +
     "using the following criteria:`nSubject - '$($GUIData.ApptSubject)'`nBody - '$($GUIData.ApptBody)'" +
     "`nReminderMinutesBeforeStart - $($GUIData.ApptReminder)`nShowAs - '$($GUIData.ShowApptAs)'" +
     "`nLocation - '$($GUIData.ApptLocation)'`nCsvFile - '$($GUIData.CSVPath)'" +
     "$(if($GUIData.ApptStartDateTime){"`nStart - '$($GUIData.ApptStartDateTime)'`nEnd - '$($GUIData.ApptEndDateTime)"})'") |
     Out-File -FilePath $LogPath -Append
 $totalErrors = 0
-foreach ($recipient in $recipients) {
+foreach ($recipient in $Recipients) {
     Start-Sleep -Milliseconds 250
     $errorCounter = 0
     $successful = $false
@@ -606,7 +611,7 @@ foreach ($recipient in $recipients) {
         $Message | Out-File -FilePath $LogPath -Append
         $totalErrors++
     }
-    if ($totalErrors -gt 10) {
+    if ($totalErrors -gt 100) {
         "********************************$(Get-Date -format u) - ERROR OUTPUT, TOO MANY ERRORS, SCRIPT HALTED *****************************" |
             Out-File -FilePath $LogPath -Append
         $Error | Out-File -FilePath $LogPath -Append
