@@ -52,6 +52,7 @@ OPTIONAL If the Created field is an indexed column (and indexing is complete), t
   --https://docs.microsoft.com/en-us/previous-versions/office/troubleshoot/office-developer/
   		encode-and-decode-attachment-using-visual-c-in-infopath-2010
   Version History:
+  --2022-06-01-Bugfix for CSVs with forward slashes in the library name
   --2022-05-12-Adjusted how the final CSV output is generated so that it properly merges all fields found in all
 		xml files retrieved in a library before exporting instead of using the first file as the master template
 		for all fields being exported as some infopath form templates changed over time without relinking.
@@ -288,7 +289,7 @@ if (!($SkipExtraction)) {
 		#Create a couple of functions and variables to use to take the raw XML data and create a CSV of the values
 			#CSV creation is in beta because testing needs to occur for repeating infopath fields and currently
 			#has no way of setting data types - everything is output as if it was text.
-		$outputCSVPath = "$filePath1\$LibraryName.csv"
+			$outputCSVPath = "$filePath1\$LibraryName.csv".Replace("/","")
 		function Get-ChildNodes {
 			[CmdletBinding()]
 			param(
@@ -366,7 +367,7 @@ if (!($SkipExtraction)) {
 	if ($MyFiles.Count -eq "" -or $null -eq $MyFiles) {
 		return
 	}
-	if ("BOTH","CSV" -contains $DataToExtract) {
+	if (@("BOTH","CSV") -contains $DataToExtract) {
 		if ((Test-Path $outputCSVPath)) {
 			$OverallCsvData = Import-CSV -Path $outputCSVPath
 		} else {
@@ -559,7 +560,7 @@ if (!($SkipExtraction)) {
 			if ($fileErrorCounter -gt 0) { $ErrorCounter += $fileErrorCounter; $FileErrorTotal++ }
 		}
 	}
-	if ("CSV","BOTH" -contains $DataToExtract) {
+	if (@("CSV","BOTH") -contains $DataToExtract) {
 		try {
 			Invoke-NormalizeHashTables -hashTables ([ref]$OverallCsvData)
 			$OverallCsvData | foreach-object { ConvertTo-Object -hashTable $_ } |
