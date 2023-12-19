@@ -52,6 +52,7 @@ OPTIONAL If the Created field is an indexed column (and indexing is complete), t
   --https://docs.microsoft.com/en-us/previous-versions/office/troubleshoot/office-developer/
   		encode-and-decode-attachment-using-visual-c-in-infopath-2010
   Version History:
+  --2023-12-19-Added error handling for XML files that fail to be converted to XML in the engine with err output
   --2022-06-01-Bugfix for CSVs with forward slashes in the library name
   --2022-05-12-Adjusted how the final CSV output is generated so that it properly merges all fields found in all
 		xml files retrieved in a library before exporting instead of using the first file as the master template
@@ -407,7 +408,15 @@ if (!($SkipExtraction)) {
 		try {
 			[xml]$xml = Get-Content $file
 		} catch {
-			[xml]$xml = (Get-Content $file).Replace("§","")
+			try {
+				[xml]$xml = (Get-Content $file).Replace("§","")
+			} catch {
+				Write-Error -Message ("$(Get-Date -format u) - Error converting file at path '$file' to XML" +
+					" - $($_.exception.message)")
+				$ErrorCounter++
+				$FileErrorTotal++
+				continue
+			}
 		}
 		if (@("BOTH","CSV") -contains $DataToExtract) {
 			$flattenedData = @{ SrcFileName = $file.Name }
@@ -423,12 +432,16 @@ if (!($SkipExtraction)) {
 				Write-Error -Message ("$(Get-Date -format u) - Error extracting child nodes for " +
 					"$($flattenedData.SrcFileName) - $($_.exception.message)")
 				$ErrorCounter++
+				$FileErrorTotal++
+				continue
 			}
 			try {
 				$OverallCsvData += @($flattenedData)
 			} catch {
 				Write-Error -Message "Unable to merge new CSV data with old in memory - $_"
 				$ErrorCounter++
+				$FileErrorTotal++
+				continue
 			}
 		}
 		if (@("BOTH","ATTACHMENTS") -contains $DataToExtract) {
