@@ -55,6 +55,7 @@ OPTIONAL Path to a CSV that contains a column for EmailAddress and there's a non
 .NOTES
     Author: Brendan Horner (MIT)
     Version History:
+    --2024-04-16-Added error handling for users/mailboxes not found so it doesn't kill the script
     --2022-05-25-Shifted logic to make Body an optional element for testing, also updated some styling
     --2021-08-25-Updated output and added more data to the log file. Fixed horizontal scroll bar for Body field
     --2021-03-16-Re-arranged functions, added function for getting Azure token
@@ -572,9 +573,12 @@ Write-Host "Beginning to post calendar events for $($Recipients.count) and will 
     "using the following criteria:`nSubject - '$($GUIData.ApptSubject)'`nBody - '$($GUIData.ApptBody)'" +
     "`nReminderMinutesBeforeStart - $($GUIData.ApptReminder)`nShowAs - '$($GUIData.ShowApptAs)'" +
     "`nLocation - '$($GUIData.ApptLocation)'`nCsvFile - '$($GUIData.CSVPath)'" +
-    "$(if($GUIData.ApptStartDateTime){"`nStart - '$($GUIData.ApptStartDateTime)'`nEnd - '$($GUIData.ApptEndDateTime)"})'") |
+    "$(if ($GUIData.ApptStartDateTime) {
+        "`nStart - '$($GUIData.ApptStartDateTime)'`nEnd - '$($GUIData.ApptEndDateTime)"
+    })'") |
     Out-File -FilePath $LogPath -Append
 $totalErrors = 0
+$RecipientsNotFound = New-Object -TypeName System.Collections.ArrayList
 foreach ($recipient in $Recipients) {
     Start-Sleep -Milliseconds 250
     $errorCounter = 0
@@ -592,7 +596,8 @@ foreach ($recipient in $Recipients) {
                     try {
                         $PostArgs.Headers."Authorization" = "Bearer $(Get-AzureToken @TokenArgs)"
                     } catch {
-                        $Msg = "$(Get-Date -format u) - Error obtaining refresh token from Azure while processing $Recipient - $_."
+                        $Msg = ("$(Get-Date -format u) - Error obtaining refresh token from Azure while processing " +
+                            "$Recipient - $_.")
                         Write-Host $Msg
                         $Msg | Out-File -FilePath $LogPath -Append
                         Write-Host -Object $ReRunMessage
@@ -605,18 +610,29 @@ foreach ($recipient in $Recipients) {
             }
         }
     } until ($successful -or $errorCounter -eq 2)
-    if($errorCounter -eq 2) {
-        $Message = "$(Get-Date -format u) - Error adding event to calendar for $recipient - $($Error[0].exception.message)"
-        Write-Host $Message
-        $Message | Out-File -FilePath $LogPath -Append
-        $totalErrors++
+    if ($errorCounter -eq 2) {
+        if ($Error[0].Exception.Message -like "*not found*") {
+            $RecipientsNotFound.Add($recipient) | Out-Null
+        } else {
+            $Message = "$(Get-Date -format u) - Error adding event to calendar for $recipient - " +
+                "$($Error[0].exception.message)"
+            Write-Host $Message
+            $Message | Out-File -FilePath $LogPath -Append
+            $totalErrors++
+        }
     }
     if ($totalErrors -gt 100) {
-        "********************************$(Get-Date -format u) - ERROR OUTPUT, TOO MANY ERRORS, SCRIPT HALTED *****************************" |
-            Out-File -FilePath $LogPath -Append
+        ("********************************$(Get-Date -format u) - ERROR OUTPUT, TOO MANY ERRORS, SCRIPT HALTED " +
+            "*****************************") | Out-File -FilePath $LogPath -Append
         $Error | Out-File -FilePath $LogPath -Append
         exit
     }
+}
+if ($RecipientsNotFound.Count -gt 0) {
+    "The following users were not found in Exchange Online: $($RecipientsNotFound -join "`n")" |
+        Out-File -FilePath $LogPath -Append
+    Write-Warning -Message ("$() users supplied were not found in Exchange Online. Pretty please, YELL AT WHOEVER " +
+        "GAVE YOU THE LIST.")
 }
 Write-Host -Object $ReRunMessage
 Write-Host -Object "Don't forget to remove those that were successful from your CSV if you must re-run"
