@@ -262,18 +262,6 @@ $arrRetry = New-Object -TypeName System.Collections.ArrayList
 $OURegex = "^CN=(?<dnName>.+?),(?<parentOU>(?:OU|CN|DC)=.+$)"
 #Get the current location so we can set the path back to that when done
 $startingPath = (Get-Location).Path
-$expectedMinutes = 0
-#Update these to help others (or yourself) know how long this will take in your environment
-if ($ObjectsToScan -contains "Groups" -or $ObjectsToScan -contains "All") {
-    $expectedMinutes += 1
-}
-if ($ObjectsToScan -contains "OUs" -or $ObjectsToScan -contains "All") {
-    $expectedMinutes += 1
-}
-if ($ObjectsToScan -contains "Computers" -or $ObjectsToScan -contains "All") {
-    $expectedMinutes += 1
-}
-Write-Warning -Message "BE AWARE THAT THIS WILL LIKELY TAKE $expectedMinutes minutes to complete!!"
 #Getting list of all properties and objects permissions can be granted to
 $ObjectTypeGUID = @{}
 $GetADObjectParameter=@{
@@ -349,6 +337,8 @@ Get-ADForest | Select-Object -ExpandProperty Domains | ForEach-Object {
             @((Get-ADComputer -Filter "*" @scanArgs @ADArgs).DistinguishedName)
         })) |
         Where-Object { $null -ne $_ }
+    $expectedMinutes = [mat]::Round($scannedObjects.Count/925)
+    Write-Warning -Message "BE AWARE THAT THIS PART WILL LIKELY TAKE $expectedMinutes minutes to complete!!"
     Write-Verbose -Message ("$(Get-date -format yyyy-MM-ddTHH-mm-ss) -- Found $($scannedObjects.Count) objects in " +
         "scan. Proceeding to obtain permissions.")
     for ($i=0;$i -lt $scannedObjects.Count;$i+=1000) {
