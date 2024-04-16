@@ -522,7 +522,8 @@ try {
     exit
 }
 $ReRunMessage = ("If you would like to run this script again, this is the command " +
-    "to pre-fill all of your values:`n& '$PSScriptRoot\Add-ExchangeEvent.ps1' -Subject '$($GUIData.ApptSubject)' -Body '$($GUIData.ApptBody)' " +
+    "to pre-fill all of your values:`n& '$PSScriptRoot\Add-ExchangeEvent.ps1' -Subject '$($GUIData.ApptSubject)' " +
+    "-Body '$($GUIData.ApptBody)' " +
     "-ReminderMinutesBeforeStart $($GUIData.ApptReminder) -ShowAs '$($GUIData.ShowApptAs)' " +
     "-Location '$($GUIData.ApptLocation)' -CsvFile '$($GUIData.CSVPath)'" +
     "$(if($GUIData.ApptStartDateTime){" -Start '$($GUIData.ApptStartDateTime)' -End '$($GUIData.ApptEndDateTime)"})'")
