@@ -52,11 +52,23 @@ OPTIONAL Where exactly is this event taking place?
 .PARAMETER CsvFile
 OPTIONAL Path to a CSV that contains a column for EmailAddress and there's a non-empty address in the first 4 entries.
 
+.PARAMETER CSVPreCheck
+OPTIONAL If set to $true, will pre-validate the UPN entries against local ActiveDirectory and separate invalid entries
+
+.PARAMETER LocalADDomain
+OPTIONAL If you plan on pre-checking local AD to verify UPNs, supply the domain.
+
+.PARAMETER Credential
+OPTIONAL If you plan on pre-checking local AD and wish to use a specific credential, supply it here.
 .NOTES
     Author: Brendan Horner (MIT)
     Version History:
     --2024-04-16-Added error handling for users/mailboxes not found so it doesn't kill the script
-    --2022-05-25-Shifted logic to make Body an optional element for testing, also updated some styling
+    --2022-10-04-Added params for AD domain to make portability easier
+    --2022-05-02-Added feature for pre-checking CSV for invalid UPNs from local AD
+    --2021-10-04-Fixed bug for the appointment body itself not appearing
+    --2021-09-30-Changed timezone from UTC to America/New_York
+    --2021-09-01-Shifted logic to make Body an optional element for testing
     --2021-08-25-Updated output and added more data to the log file. Fixed horizontal scroll bar for Body field
     --2021-03-16-Re-arranged functions, added function for getting Azure token
     --2020-12-14-Initial version with a GUI and uses Graph API for the process to support modern auth.
@@ -83,7 +95,10 @@ param(
     [Parameter(Mandatory=$true)][string]$ClientId,
     [Parameter(Mandatory=$true)][string]$SubscriptionId,
     [Parameter(Mandatory=$true)][string]$VaultName,
-    [Parameter(Mandatory=$true)][string]$SecretName  
+    [Parameter(Mandatory=$true)][string]$SecretName,
+    [bool]$CSVPreCheck,
+    [string]$LocalADDomain,
+    [pscredential]$Credential
 )
 ###BEGIN BORING FUNCTION DECLARATIONS###
 function Get-AzureToken {
@@ -185,7 +200,7 @@ function Resolve-DateInputs {
 }
 function Resolve-RequiredInputs {
     if ($TextCSVPath.Text.Length -gt 0 -and
-    (Test-Path -Path $TextCSVPath.Text)){
+    (Test-Path -Path $TextCSVPath.Text)) {
         $Entries = (ConvertFrom-Csv (get-content ($TextCSVPath.Text) -TotalCount 5)).EmailAddress |
             Where-Object { $null -ne $_ }
         if($Entries.count -eq 0){
@@ -215,7 +230,8 @@ function Get-GUIData {
         [int]$reminderMinutesBeforeStart,
         [string]$showAs,
         [string]$location,
-        [string]$csvFile
+        [string]$csvFile,
+        [bool]$csvPreCheck
     )
     $TodayPlus3 = (Get-Date).AddDays(3).ToShortDateString()
     if ($start -lt $TodayPlus3 -and $null -ne $start) { Remove-Variable -Name "start" }
@@ -293,6 +309,12 @@ function Get-GUIData {
                 <StackPanel Orientation="Horizontal">
                     <Label>Show Appointment As:</Label>
                     <ComboBox x:Name="ShowApptAsDropdown" Height="25" Width="150" VerticalAlignment="Center"/>
+                    <StackPanel x:Name="stackPanelCSVPreCheck" Orientation="Horizontal">
+                        <Label>Pre-Check CSV Addresses?</Label>
+                        <RadioButton GroupName="CSVPreCheck" VerticalAlignment="Center" Content="Yes" x:Name="Yes"/>
+                        <RadioButton GroupName="CSVPreCheck" Margin="10,0,0,0" VerticalAlignment="Center" Content="No" x:Name="No" IsChecked="True"/>
+                        <TextBox x:Name="textCSVPreCheck" Visibility="Hidden" Height="1" Width="1" Text="No"/>
+                    </StackPanel>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal">
                     <Label>How many MINUTES before Appt Start should reminder appear?</Label>
@@ -329,6 +351,15 @@ function Get-GUIData {
             throw
         }
     }
+    #Event handler for the radio buttons, gets added to StackPanel that holds the radio buttons as an event
+    [System.Windows.RoutedEventHandler]$Script:CheckedEventHandler = {
+        $textCSVPreCheck.Text = $_.source.name
+    }
+    $stackPanelCSVPreCheck.AddHandler(
+        [System.Windows.Controls.RadioButton]::CheckedEvent,
+        $CheckedEventHandler
+    )
+    #Here we add triggers to the dropdowns and datepickers for the date fields to check for valid inputs
     $ApptStartDate.Add_SelectedDateChanged({
         Resolve-DateInputs
         Resolve-RequiredInputs
@@ -357,6 +388,7 @@ function Get-GUIData {
         Resolve-DateInputs
         Resolve-RequiredInputs
     })
+    #Add a trigger to validate the CSV path being supplied and that it has an EmailAddress column header
     $TextCSVPath.Add_TextChanged({
         if ((Test-Path $TextCSVPath.Text) -and $TextCSVPath.Text.Length -gt 0) {
             $Entries = (ConvertFrom-Csv (get-content -Path ($TextCSVPath.Text) -TotalCount 5)).EmailAddress |
@@ -371,6 +403,7 @@ function Get-GUIData {
             $LabelTextCSVPath.Content="INVALID"
         }
     })
+    #Validate all required inputs any time these fields are changed
     $ApptSubject.Add_TextChanged({
         Resolve-RequiredInputs
     })
@@ -383,6 +416,7 @@ function Get-GUIData {
     $ReminderNumberOfMinutes.Add_TextChanged({
         Resolve-RequiredInputs
     })
+    #This adds a proper Browse button for the CSV path selection that works in Windows and captures the path
     $BtnBrowse.Add_Click({
         $fileDialog = New-Object -TypeName System.Windows.Forms.OpenFileDialog
         $fileResult = $fileDialog.ShowDialog()
@@ -403,6 +437,7 @@ function Get-GUIData {
         $Window.DialogResult = $true
         $Window.Close()
     })
+    #Once the main window is rendered on the screen, we need to fill the dropdowns and pre-set them if supplied
     $Window.Add_ContentRendered({
         1..12 | foreach-object { $HourDropdownStart.AddChild($_);$HourDropdownEnd.AddChild($_) }
         @("AM","PM") | foreach-object { $AmPmDropdownStart.AddChild($_);$AmPmDropdownEnd.AddChild($_) }
@@ -452,6 +487,7 @@ function Get-GUIData {
     return [PSCustomObject]@{
         GUIGood = $GUIGood
         CSVPath = $TextCSVPath.Text
+        CSVPreCheck = if ($textCSVPreCheck.Text -eq "Yes") { $true } else { $false }
         ApptStartDateTime = $StartDateTime
         ApptEndDateTime = $EndDateTime
         ApptSubject = $ApptSubject.Text
@@ -487,6 +523,7 @@ try {
     Disconnect-AzAccount | Out-Null
     exit
 }
+$ScriptUsername = (Get-AzContext).Account.Id
 Disconnect-AzAccount | Out-Null
 
 #For GUI, load the assembly framework
@@ -507,6 +544,7 @@ $GUIArgs = @{
     showAs = $showAs
     location = $location
     csvFile = $csvFile
+    csvPreCheck = $CSVPreCheck
 }
 if ($null -eq $Start) { $GUIArgs.Remove("start") }
 if ($null -eq $End) { $GUIArgs.Remove("end") }
@@ -522,12 +560,15 @@ try {
     exit
 }
 $ReRunMessage = ("If you would like to run this script again, this is the command " +
-    "to pre-fill all of your values:`n& '$PSScriptRoot\Add-ExchangeEvent.ps1' -Subject '$($GUIData.ApptSubject)' " +
+    "to pre-fill all of your values:`n& '$PSScriptRoot\Add-ExchangeEvent.ps1' " +
+    "-Subject '$($GUIData.ApptSubject)' " +
     "-Body '$($GUIData.ApptBody)' " +
     "-ReminderMinutesBeforeStart $($GUIData.ApptReminder) -ShowAs '$($GUIData.ShowApptAs)' " +
     "-Location '$($GUIData.ApptLocation)' -CsvFile '$($GUIData.CSVPath)'" +
-    "$(if($GUIData.ApptStartDateTime){" -Start '$($GUIData.ApptStartDateTime)' -End '$($GUIData.ApptEndDateTime)"})'")
-$postBodyHash = @{
+    "$(if($GUIData.ApptStartDateTime){" -Start '$($GUIData.ApptStartDateTime)' " +
+        "-End '$($GUIData.ApptEndDateTime)"})'" +
+    "$(if($GUIData.CSVPreCheck -eq $true){ " -CSVPreCheck `$true" })")
+    $postBodyHash = @{
     start = @{
         dateTime=$GUIData.ApptStartDateTime.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss")
         timeZone="UTC"
@@ -569,14 +610,64 @@ $PostArgs = @{
     }
 }
 $Recipients = @((import-csv $GUIData.CSVPath).EmailAddress | Sort-Object)
+if ($GUIData.csvPreCheck -eq $true -or $CSVPreCheck -eq $true) {
+    $adDCArgs = @{
+        Discover = $true
+        NextClosestSite = $true
+        ErrorAction = "STOP"
+    }
+    if ($LocalADDomain) {
+        $adDCArgs.DomainName = $LocalADDomain
+    }
+    do {
+        try {
+            $ScriptDC = [string](Get-ADDomainController @adDCArgs).Hostname
+            if ($Credential) {
+                $adu = Get-ADUser $ScriptUsername -ErrorAction "Stop" -Server $ScriptDC -Credential $Credential
+            } else {
+                $adu = Get-ADUser $ScriptUsername -ErrorAction "Stop" -Server $ScriptDC
+            }
+        } catch {
+            if ($_.exception.message -like "*rejected the client credentials*") {
+                $Credential = Get-Credential $ScriptUsername -Message "Previous cred info was invalid, try again"
+            }
+        }
+    } until ($null -ne $ScriptDC)
+    $adArgs = @{
+        ErrorAction = "Stop"
+        Server = $ScriptDC
+    }
+    if ($Credential) {
+        $adArgs.Credential = $Credential
+    }
+    $badRecipients = New-Object -TypeName System.Collections.ArrayList
+    Write-Host "$(Get-Date -Format u) - Beginning CSV Pre-Check"
+    foreach ($recipient in $Recipients) {
+        try {
+            $adu = @(Get-ADUser -Filter "userPrincipalName -eq '$recipient'" @adArgs)
+            if ($adu.Count -ne 1) {
+                throw
+            }
+        } catch {
+            $badRecipients.Add($recipient) | Out-Null
+        }
+    }
+    Write-Host "$(Get-Date -Format u) - Completed CSV Pre-Check"
+    if ($badRecipients.Count -gt 0) {
+        $badPath = "$PSScriptRoot\Add-ExchangeEventBadCSVEntries.txt"
+        $now = Get-Date -Format u
+        "$now - Invalid UPNs supplied:`n$($badRecipients -join "`n")" | Out-File -FilePath $badPath -Append
+        Write-Host "$($badRecipients.Count) bad recipients removed during CSV pre-check and output to '$badPath'."
+        $Recipients = $Recipients | Where-Object { $badRecipients -notcontains $_ }
+    }
+}
 Write-Host "Beginning to post calendar events for $($Recipients.count) and will log progress in $LogPath"
 ("**************$(Get-Date -format u) - Beginning to post calendar events for $($Recipients.Count) mailboxes " +
     "using the following criteria:`nSubject - '$($GUIData.ApptSubject)'`nBody - '$($GUIData.ApptBody)'" +
     "`nReminderMinutesBeforeStart - $($GUIData.ApptReminder)`nShowAs - '$($GUIData.ShowApptAs)'" +
     "`nLocation - '$($GUIData.ApptLocation)'`nCsvFile - '$($GUIData.CSVPath)'" +
-    "$(if ($GUIData.ApptStartDateTime) {
-        "`nStart - '$($GUIData.ApptStartDateTime)'`nEnd - '$($GUIData.ApptEndDateTime)"
-    })'") |
+    "$(if($GUIData.ApptStartDateTime){"`nStart - '$($GUIData.ApptStartDateTime)'`nEnd - '$($GUIData.ApptEndDateTime)"})'" +
+    "$(if($GUIData.CSVPreCheck -eq $true){ "`nCSVPreCheck - `$true" })") |
     Out-File -FilePath $LogPath -Append
 $totalErrors = 0
 $RecipientsNotFound = New-Object -TypeName System.Collections.ArrayList
