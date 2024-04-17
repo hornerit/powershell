@@ -337,7 +337,7 @@ Get-ADForest | Select-Object -ExpandProperty Domains | ForEach-Object {
             @((Get-ADComputer -Filter "*" @scanArgs @ADArgs).DistinguishedName)
         })) |
         Where-Object { $null -ne $_ }
-    $expectedMinutes = [mat]::Round($scannedObjects.Count/925)
+    $expectedMinutes = [mat]::Round($scannedObjects.Count/875)
     Write-Warning -Message "BE AWARE THAT THIS PART WILL LIKELY TAKE $expectedMinutes minutes to complete!!"
     Write-Verbose -Message ("$(Get-date -format yyyy-MM-ddTHH-mm-ss) -- Found $($scannedObjects.Count) objects in " +
         "scan. Proceeding to obtain permissions.")
