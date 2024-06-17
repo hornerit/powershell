@@ -520,11 +520,11 @@ try {
 } catch {
     Write-Host "$(Get-Date -format "yyyy-MM-ddTHH:mm:ss") - Unable to get app secret from Key Vault - $_."
     Read-Host "press Enter to exit script"
-    Disconnect-AzAccount | Out-Null
+    Disconnect-AzAccount *> $null
     exit
 }
 $ScriptUsername = (Get-AzContext).Account.Id
-Disconnect-AzAccount | Out-Null
+Disconnect-AzAccount *> $null
 
 #For GUI, load the assembly framework
 try {
