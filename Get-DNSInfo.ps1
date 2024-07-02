@@ -1128,7 +1128,11 @@ do {
             $Entry = $null
             do {
                 if ($Entry.Length -eq 0) {
-                    $Entry = Read-Host "`nWhat IP or Hostname would you like to query?"
+                    $Entry = Read-Host "`nWhat IP or Hostname would you like to query (enter x to return to menu)?"
+                }
+                if ($Entry -eq "x") {
+                    $DoneWithActions = $true
+                    continue
                 }
                 $EntryRecords = Get-DNSRecordsFromTable -allDnsRecords $AllRecords -entry $Entry
                 $ARecords = @($EntryRecords.Value | Where-Object { $_.RecordType -eq "A" })
