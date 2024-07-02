@@ -12,6 +12,7 @@ zones, mostly expecting Forest replication for all zones.
 .NOTES
     Created by: Brendan Horner
     Version History:
+    2024-07-02-Added an escape option when querying to return to menu
     2021-02-03-Couple of bug fixes, added Zone to the CSV exports, added timestamp to limited csv export
     2021-01-21-Made many updates to try to get the full feature set working over the last several days.
     2020-12-07-Initial version
@@ -1128,9 +1129,9 @@ do {
             $Entry = $null
             do {
                 if ($Entry.Length -eq 0) {
-                    $Entry = Read-Host "`nWhat IP or Hostname would you like to query (enter x to return to menu)?"
+                    $Entry = Read-Host "`nWhat IP or Hostname would you like to query (enter x! to return to menu)?"
                 }
-                if ($Entry -eq "x") {
+                if ($Entry -eq "x!") {
                     $DoneWithActions = $true
                     continue
                 }
