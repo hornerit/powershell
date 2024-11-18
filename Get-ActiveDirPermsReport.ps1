@@ -117,7 +117,7 @@ function Get-AllGroupMemberships {
             })) |
             Sort-Object -Property Domain,Name
     } catch {
-        Write-Error -Message "Error getting initial groups - $_"
+        Write-Error -Message "Error getting initial groups - $($_.Exception.Message)"
         throw
     }
     #Add initial batch of groups to the ArrayList
@@ -133,7 +133,6 @@ function Get-AllGroupMemberships {
             throw "No domain matched the initial group '$($group.DistinguishedName)'"
         }
         $grpDNS = $grpDomain.DNSRoot
-
         #Recursively get group memberships
         try {
             $nestArgs = @{
@@ -157,9 +156,10 @@ function Get-AllGroupMemberships {
                         Select-Object -Property DistinguishedName,Name,@{N="Domain";E={$domName}} |
                         Where-Object { $allGroups -notcontains "$($_.Domain)\$($_.Name)" }
                 })) |
+                Where-Object { $null -ne $_ }
                 Sort-Object -Property Domain,Name
         } catch {
-            Write-Error -Message "Error getting first set of nested groups - $_"
+            Write-Error -Message "Error getting first set of nested groups - $($_.Exception.Message)"
             throw
         }
         #If any groups are found that show that the current group is a member of another, keep repeating the steps
@@ -174,7 +174,7 @@ function Get-AllGroupMemberships {
                     $nestDom = $domains | Where-Object {
                         $_.DNSRoot -eq $nestedGrp.Domain -or $_.NetBIOSName -eq $nestedGrp.Domain
                     }
-                    $nestDNS = $nestedDom.DNSRoot
+                    $nestDNS = $nestDom.DNSRoot
                     $nestedArgs = @{
                         Identity = $nestedGrp.DistinguishedName
                         Server = $nestDNS
@@ -204,7 +204,7 @@ function Get-AllGroupMemberships {
                                     Where-Object { $allGroups -notcontains "$($_.Domain)\$($_.Name)" }
                             })
                     } catch {
-                        throw "Error with group '$($nestedGrp.Domain)\$($nestedGrp.Name)' - "
+                        throw "Error with group '$($nestedGrp.Domain)\$($nestedGrp.Name)' - $($_.Exception.Message)"
                     }
                 }) |
                 Sort-Object -Property Domain,Name
