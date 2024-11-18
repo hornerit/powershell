@@ -52,6 +52,7 @@ OPTIONAL If the Created field is an indexed column (and indexing is complete), t
   --https://docs.microsoft.com/en-us/previous-versions/office/troubleshoot/office-developer/
   		encode-and-decode-attachment-using-visual-c-in-infopath-2010
   Version History:
+  --2024-11-18-Added logic for some infopath forms that use FormFields instead of myFields for its nodes
   --2023-12-19-Added error handling for XML files that fail to be converted to XML in the engine with err output
   --2022-06-01-Bugfix for CSVs with forward slashes in the library name
   --2022-05-12-Adjusted how the final CSV output is generated so that it properly merges all fields found in all
@@ -422,10 +423,12 @@ if (!($SkipExtraction)) {
 			$flattenedData = @{ SrcFileName = $file.Name }
 			$breadCrumbs = @()
 			$getArgs = @{
-				Node = $xml.myFields
 				FlattenedData = $flattenedData
 				BreadCrumbs = $breadCrumbs
 			}
+			#Thanks to Michael Adams for finding out that some InfoPath forms use FormFields not myFields.
+				#Might be ones built in 2k3, might be ones deployed as solutions, unsure.
+			if ($xml.myFields) { $getArgs.Node = $xml.myFields } else { $getArgs.Node = $xml.FormFields }
 			try {
 				$flattenedData,$breadCrumbs = Get-ChildNodes @getArgs
 			} catch {
