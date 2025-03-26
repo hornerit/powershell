@@ -14,9 +14,6 @@ switch to force command line interactive prompts instead
 .PARAMETER EmailDomain
 REQUIRED Domain of the mailboxes affected by spam campaign (used for message trace search/filter). Defaults to
 contoso.com and will prompt if you don't supply yours.
-.PARAMETER NoMFA
-OPTIONAL If the account you wish to use is enabled for basic auth and doesn't have expiring tokens, use this
-switch to operate without MFA; otherwise, it will expect to use MFA and modern exchange.
 .PARAMETER AccountLockdownScriptName
 OPTIONAL If you wish to run a script to lockdown sender(s) that are part of the EmailDomain as a part of this
 process (and your script has a $Users string parameter that can split based on commas), supply the full name of the script (e.g. Secure-Account-Manually.ps1) and add the script to the same folder as this one
@@ -28,6 +25,7 @@ O365 Compliance and Security Center), supply them to this switch to ignore them 
     Created by: Brendan Horner (www.hornerit.com)
     Notes: MUST BE RUN AS SCRIPT FILE, do NOT copy-paste into PS to run
     Version History:
+    --2023-09-07-Removed NoMFA option and corresponding code
     --2021-03-18-Added more clarifying wording
     --2020-10-20-Added some fixes for ambiguous mailbox error from Compliance Search
     --2020-07-16-Added timestamp to content search name so that there wouldn't be duplicates
@@ -46,14 +44,13 @@ O365 Compliance and Security Center), supply them to this switch to ignore them 
     --2019-05-02-Added better logic for throttling
     --2019-04-15-Initial public version
 .EXAMPLE
-.\O365-SPAM-REMOVER.ps1 -NoMFA
-.\O365-SPAM-REMOVER.ps1 -NoMFA -AccountLockdownScriptName "Secure-Account.ps1"
+.\O365-SPAM-REMOVER.ps1
+.\O365-SPAM-REMOVER.ps1 -AccountLockdownScriptName "Secure-Account.ps1"
 #>
 [CmdletBinding()]
 param(
     [switch]$NoGUI,
     [string]$EmailDomain = "contoso.com",
-    [switch]$NoMFA,
     [string]$AccountLockdownScriptName,
     [string[]]$Mailboxes2Exclude
 )
@@ -62,31 +59,6 @@ param(
 Import-Module ExchangeOnlineManagement
 do {
     $Good = 0
-    if ($NoMFA) {
-        try {
-            $Cred = Get-Credential -Message "Please enter exchange admin EMAIL ADDRESS...EMAIL" -ErrorAction Stop
-            if ($Cred.Password.Length -eq 0) {
-                throw
-            }
-        } catch {
-            Write-Host "Error with your credential input, please try again or re-run without the -NoMFA switch"
-            Continue
-        }
-        try {
-            Connect-ExchangeOnline -Credential $Cred -ShowBanner:$False -ErrorAction Stop
-        } catch {
-            Read-Host "Error connecting to Exchange Online - $_. Press any key to exit."
-            Exit
-        }
-        try {
-            Get-OrganizationConfig | Select-Object Name
-            $Good = 1
-            $CredUPN = $Cred.UserName
-        } catch {
-            Write-Host "Supplied credential is not an Exchange Admin."
-            Disconnect-ExchangeOnline -confirm:$false
-        }
-    } else {
         $CredUPN = Read-Host "Please enter an Exchange Admin email address"
         if ($CredUPN -match "^.+@.+\..+$") {
             try {
@@ -104,7 +76,6 @@ do {
             }
         } else {
             Write-Host "Did not supply an email address, try again."
-        }
     }
 } until ($Good -eq 1)
 
@@ -118,10 +89,7 @@ try {
 if ($GUI -and !($NoGUI)) {
     function Get-GUIData{
         [CmdletBinding()]
-        param(
-            [switch]
-            $NoMFA
-        )
+        param()
         $TodayMinus11 = (Get-Date).AddDays(-10).ToShortDateString()
         $TodayPlus2 = (Get-Date).AddDays(2).ToShortDateString()
         $TodayPlus1=(Get-Date).AddDays(1).ToShortDateString()
@@ -633,7 +601,7 @@ if ($GUI -and !($NoGUI)) {
             Users2Lockdown = $Users2Lockdown
         }
     }
-    $GUIData = Get-GUIData -NoMFA:$NoMFA
+    $GUIData = Get-GUIData
     if ($GUIData.GUIGood) {
         #SET SENDERS TO AN ARRAY JOINED BY COMMAS
         $Senders = $GUIData.Senders
@@ -845,11 +813,7 @@ Write-Host Done
 
 try {
     Write-Host "Connecting to Security and Compliance Center..."
-    if ($NoMFA) {
-        Connect-IPPSSession -Credential $Cred -ErrorAction Stop -WarningAction SilentlyContinue
-    } else {
         Connect-IPPSSession -UserPrincipalName $CredUPN -ErrorAction Stop -WarningAction SilentlyContinue
-    }
     Write-Host "Done"
 } catch {
     $ErrMsg = "Error connecting to O365 Compliance and Security Center to create content search - $_. " +
