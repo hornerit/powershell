@@ -568,7 +568,7 @@ $ReRunMessage = ("If you would like to run this script again, this is the comman
     "$(if($GUIData.ApptStartDateTime){" -Start '$($GUIData.ApptStartDateTime)' " +
         "-End '$($GUIData.ApptEndDateTime)"})'" +
     "$(if($GUIData.CSVPreCheck -eq $true){ " -CSVPreCheck `$true" })")
-    $postBodyHash = @{
+$postBodyHash = @{
     start = @{
         dateTime=$GUIData.ApptStartDateTime.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss")
         timeZone="UTC"
@@ -609,7 +609,7 @@ $PostArgs = @{
         "Accept" = "application/json, text/plain"
     }
 }
-$Recipients = @((import-csv $GUIData.CSVPath).EmailAddress | Sort-Object)
+$Recipients = @((Import-Csv $GUIData.CSVPath).EmailAddress | Sort-Object)
 if ($GUIData.csvPreCheck -eq $true -or $CSVPreCheck -eq $true) {
     $adDCArgs = @{
         Discover = $true
@@ -723,8 +723,8 @@ foreach ($recipient in $Recipients) {
 if ($RecipientsNotFound.Count -gt 0) {
     "The following users were not found in Exchange Online: $($RecipientsNotFound -join "`n")" |
         Out-File -FilePath $LogPath -Append
-    Write-Warning -Message ("$() users supplied were not found in Exchange Online. Pretty please, YELL AT WHOEVER " +
-        "GAVE YOU THE LIST.")
+    Write-Warning -Message ("$($RecipientsNotFound.Count) users supplied were not found in Exchange Online. " +
+        "Pretty please, YELL AT WHOEVER GAVE YOU THE LIST.")
 }
 Write-Host -Object $ReRunMessage
 Write-Host -Object "Don't forget to remove those that were successful from your CSV if you must re-run"
