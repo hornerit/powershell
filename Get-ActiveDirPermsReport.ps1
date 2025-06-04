@@ -17,17 +17,28 @@ OPTIONAL - Switch to use if you want to show full capabilities of a supplied Use
 OPTIONAL - Defaults to "OUs", supply which Active Directory objects that should be scanned for an ACL: OUs, Groups,
     Computers, or All. We are unable to scan user objects for ACLs because it takes too long. OUs will scan
     both OrganizationalUnits and Containers.
+.PARAMETER OutputFilteredReportOnly
+OPTIONAL - Default is to output the entire ACL report for AD in addition to any UserOrGroup filters you supply.
+    This will only output the filtered report instead.
+.PARAMETER ExistingPermsReportPath
+OPTIONAL - If you have already generated a full output, provide the path to the CSV and this will bypass querying
+    Active Directory and just leverage the existing CSV to output a filtered report
 
 .NOTES
     Created By: Brendan Horner (MIT)
     Credit: https://devblogs.microsoft.com/powershell-community/understanding-get-acl-and-ad-drive-output/
     Version History
+    --2025-06-04-Some code refactor
+    --2025-05-19-Added option to use the local ADPerms-ALL output CSV to avoid re-querying all of AD
+    --2025-04-16-Attempting to simply log those OUs with backslashes that break things instead of failing
+    --2024-12-05-Fixed bug when filtering for user or group that would filter out valid entries
     --2024-04-16-Ready for production use
 
 .EXAMPLE
 .\Get-ActiveDirPermsReport.ps1
 .\Get-ActiveDirPermsReport.ps1 -ReportOutputFolderPath "C:\MyFolder\MySubFolder" -UserOrGroup "Group1"
 .\Get-ActiveDirPermsReport.ps1 -UserOrGroup User1 -IncludeGroupMemberships -ObjectsToScan All
+.\Get-ActiveDirPermsReport.ps1 -UserOrGroup User1 -IncludeGroupMemberships -ObjectsToScan All -OutputFilteredReportOnly $true
 #>
 [CmdletBinding()]
 param(
@@ -35,8 +46,11 @@ param(
     [string[]]$UserOrGroup,
     [string]$ReportOutputFolderPath = "C:\temp",
     [bool]$IncludeGroupMemberships,
-    [ValidateSet("OUs","Groups","Computers","All")][string]$ObjectsToScan = "OUs"
+    [bool]$OutputFilteredReportOnly,
+    [ValidateSet("OUs","Groups","Computers","All")][string]$ObjectsToScan = "OUs",
+    [string]$ExistingPermsReportPath
 )
+#REQUIRES -Modules ActiveDirectory
 ###FUNCTIONS###
 function Get-AllGroupMemberships {
     [CmdletBinding()]
@@ -89,7 +103,8 @@ function Get-AllGroupMemberships {
         throw
     }
     if ($null -eq $adoDomain) {
-        Write-Error -Message "No domain found that matches identity '$Identity's canonical name of '$($ado.canonicalname)', which should be impossible"
+        Write-Error -Message ("No domain found that matches identity '$Identity's canonical name of '" +
+            "$($ado.canonicalname)', which should be impossible")
         throw
     }
     $adoDomDNS = $adoDomain.DNSRoot
@@ -117,7 +132,7 @@ function Get-AllGroupMemberships {
             })) |
             Sort-Object -Property Domain,Name
     } catch {
-        Write-Error -Message "Error getting initial groups - $($_.Exception.Message)"
+        Write-Error -Message "Error getting initial groups - $_"
         throw
     }
     #Add initial batch of groups to the ArrayList
@@ -133,6 +148,7 @@ function Get-AllGroupMemberships {
             throw "No domain matched the initial group '$($group.DistinguishedName)'"
         }
         $grpDNS = $grpDomain.DNSRoot
+
         #Recursively get group memberships
         try {
             $nestArgs = @{
@@ -156,10 +172,9 @@ function Get-AllGroupMemberships {
                         Select-Object -Property DistinguishedName,Name,@{N="Domain";E={$domName}} |
                         Where-Object { $allGroups -notcontains "$($_.Domain)\$($_.Name)" }
                 })) |
-                Where-Object { $null -ne $_ }
                 Sort-Object -Property Domain,Name
         } catch {
-            Write-Error -Message "Error getting first set of nested groups - $($_.Exception.Message)"
+            Write-Error -Message "Error getting first set of nested groups - $_"
             throw
         }
         #If any groups are found that show that the current group is a member of another, keep repeating the steps
@@ -218,13 +233,99 @@ function Get-AllGroupMemberships {
     # Return the unique list of group names in the format DOMAIN\NAME, DOMAIN could be netbiosname or DNSRoot/FQDN
     $allGroups | Select-Object -Unique | Sort-Object
 }
+
+function Get-LUACL {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$dn,
+        [Parameter(Mandatory=$true)][string]$domName,
+        [Parameter(Mandatory=$true)][hashtable]$systemSidsHash,
+        [Parameter(Mandatory=$true)][hashtable]$customSidsHash,
+        [Parameter(Mandatory=$true)][object]$driveArgs,
+        [Parameter(Mandatory=$true)][hashtable]$ObjTypeGUIDHash,
+        [switch]$DoNotRetry
+    )
+    if ($dn -like "*\*" -and $dn -notlike "Microsoft.ActiveDirectory.Management.dll*") {
+        $dn = "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$dn"
+        $dn2 = "Microsoft.ActiveDirectory.Management\ActiveDirectory:://RootDSE/$dn"
+    }
+    try {
+        Get-Acl $dn -ErrorAction Stop |
+            Select-Object -ExpandProperty Access |
+            Where-Object { $_.IsInherited -eq $false} |
+            Select-Object -Property @{N="DistinguishedName";E={$dn}},
+                @{N="IdentityUsername";E={
+                    if ($systemSidsHash.ContainsKey($_.IdentityReference.Value)) {
+                        "$domName\$($systemSidsHash."$($_.IdentityReference.Value)")"
+                    } elseif ($customSidsHash.ContainsKey($_.IdentityReference.Value)) {
+                        $customSidsHash."$($_.IdentityReference.Value)"
+                    } elseif ($_.IdentityReference.Value -notlike "S-1-5-*" -and 
+                    $_.IdentityReference -notlike "S-1-5-*") {
+                        $_.IdentityReference
+                    } else {
+                        try {
+                            $adoArgs = @{
+                                Filter = "objectSid -eq '$($_.IdentityReference)'"
+                                Properties = @("samaccountname","name")
+                                Server = $driveArgs.Server
+                            }
+                            $ado = Get-ADObject @adoArgs @ADArgs
+                            if ($null -eq $ado) {
+                                $ado = @{SID = $_.IdentityReference; samaccountname = "UNKNOWN USER" }
+                            }
+                        } catch {
+                            Write-Error "Error getting ADObject using sid - $_"
+                            throw
+                        }
+                        $ado.samaccountname
+                        $customSidsHash.Add($ado.SID.Value,$ado.samaccountname)
+                    }
+                }},
+                AccessControlType,
+                ActiveDirectoryRights,
+                @{N="RightsToObject";E={$ObjTypeGUIDHash.[GUID]"$($_.ObjectType)"}},
+                @{N="PropagatesToChildren";E={
+                    if ($_.InheritanceFlags -eq "None") { "FALSE" } else { "TRUE" }
+                }},
+                @{N="AppliesTo";E={
+                    if ($_.InheritanceType -eq "None") {
+                        "This Object Only"
+                    } elseif ($_.InheritanceType -eq "Children") {
+                        "Immediate Children Only and NOT This Object"
+                    } elseif ($_.InheritanceType -eq "SelfAndChildren") {
+                        "This Object and Immediate Children Only"
+                    } else { $_.InheritanceType }
+                }},
+                PropagationFlags
+    } catch {
+        if ($_.Exception.Message -like "*Cannot find a provider with the name *" -and $dn -like "*.dll*") {
+            $ADWeirdArgs = @{
+                dn = $dn2
+                domName = $domName
+                systemSidsHash = $systemSidsHash
+                customSidsHash = $customSidsHash
+                driveArgs = $driveArgs
+                ObjTypeGUIDHash = $ObjTypeGUIDHash
+            }
+            Get-LUACL @ADWeirdArgs
+        } else {
+            Write-Host -ForegroundColor Red -Object "Error retrieving ACL for DN '$dn' - $_"
+            if(!$DoNotRetry){
+                $arrRetry.Add($dn) | Out-Null
+            }
+        }
+    }
+}
 ###MAIN###
 $ADArgs = @{
     ErrorAction = "Stop"
 }
 $outputFileName = ""
+if ($ReportOutputFolderPath -like "*\") {
+    $ReportOutputFolderPath = $ReportOutputFolderPath.Substring(0,$ReportOutputFolderPath.Length)
+}
 #This is a list of commonly-known sids that exist in Active Directory in each Domain for faster lookup.
-$systemSids = @{
+$systemSidsHash = @{
     'S-1-5-32-544' = 'Administrators'
     'S-1-5-32-545' = 'Users'
     'S-1-5-32-546' = 'Guests'
@@ -255,251 +356,195 @@ $systemSids = @{
     'S-1-5-32-580' = 'Builtin\Remote Management Users'
 }
 #As we resolve sids to a user-friendly dataset, put them here so we can pull from this faster than AD query again
-$customSids = @{}
+$customSidsHash = @{}
 #Variable to hold all the permissions to be output later
-$arrPerms = New-Object -TypeName System.Collections.ArrayList
-$arrRetry = New-Object -TypeName System.Collections.ArrayList
-$OURegex = "^CN=(?<dnName>.+?),(?<parentOU>(?:OU|CN|DC)=.+$)"
-#Get the current location so we can set the path back to that when done
-$startingPath = (Get-Location).Path
-#Getting list of all properties and objects permissions can be granted to
-$ObjectTypeGUID = @{}
-$GetADObjectParameter=@{
-    SearchBase=(Get-ADRootDSE @ADArgs).SchemaNamingContext
-    LDAPFilter='(SchemaIDGUID=*)'
-    Properties=@("Name", "SchemaIDGUID")
+if ($ExistingPermsReportPath -and (Test-Path $ExistingPermsReportPath) -and $ExistingPermsReportPath -like "*.csv") {
+    Write-Verbose -Message "$(Get-date -format u) -- Importing perms CSV"
+    $arrPerms = Import-CSV $ExistingPermsReportPath
+    Write-Verbose -Message "$(Get-date -format u) -- Done"
+    $OutputFilteredReportOnly = $true
+} else {
+    $arrPerms = New-Object -TypeName System.Collections.ArrayList
 }
-$SchGUID = Get-ADObject @GetADObjectParameter
-foreach ($schemaItem in $SchGUID){
-    $ObjectTypeGUID.Add([GUID]$schemaItem.SchemaIDGUID,$schemaItem.Name)
-}
-$ADObjExtPar = @{
-    SearchBase = "CN=Extended-Rights,$((Get-ADRootDSE @ADArgs).ConfigurationNamingContext)"
-    LDAPFilter = '(ObjectClass=ControlAccessRight)'
-    Properties = @("Name", "RightsGUID")
-}
-$SchExtGUID = Get-ADObject @ADObjExtPar @ADArgs
-foreach ($schExtItem in $SchExtGUID) {
-    $key = [GUID]$schExtItem.RightsGUID
-    if (!($ObjectTypeGUID.ContainsKey($key))) {
-        $ObjectTypeGUID.Add($key,$schExtItem.Name)
+$arrPermsFiltered = New-Object -TypeName System.Collections.ArrayList
+if ($arrPerms.Count -eq 0) {
+    $arrRetry = New-Object -TypeName System.Collections.ArrayList
+    $OURegex = "^CN=(?<dnName>.+?),(?<parentOU>(?:OU|CN|DC)=.+$)"
+    #Get the current location so we can set the path back to that when done
+    $startingPath = (Get-Location).Path
+    #Getting list of all properties and objects permissions can be granted to
+    $ObjTypeGUIDHash = @{}
+    $GetADObjectParameter=@{
+        SearchBase=(Get-ADRootDSE @ADArgs).SchemaNamingContext
+        LDAPFilter='(SchemaIDGUID=*)'
+        Properties=@("Name", "SchemaIDGUID")
     }
-}
-#Adding an entry for when an ACL has an inherited object type of all zeroes, which means all properties
-$ObjectTypeGUID.Add([GUID]"00000000-0000-0000-0000-000000000000","AllProperties")
-
-#Using Get-ADRootDSE above should trigger the loading of the AD: drive, now we can set to that for Get-ACL
-$start = Get-date
-$startStr = $start.ToString("yyyy-MM-ddTHH-mm-ss")
-Write-Host "$startStr -- BEGINNING"
-#Get the AD Forest, focus on each domain, build a PSDrive so AD calls work in that domain, use it, get all DNs of
-    #objects chosen to scan, and use the Get-ACL command to pull all ACLs on an DN. We filter for those ACLs that
-    #are not inherited, and finally format output.
-Get-ADForest | Select-Object -ExpandProperty Domains | ForEach-Object {
-    $dom = Get-ADDomain -Identity $_ | Select-Object NetBIOSName,DNSRoot,DistinguishedName,Name
-    $domDNS = $dom.DNSRoot
-    $driveArgs = @{
-        Name = "AD$(if ($dom.NetBIOSName) { $dom.NetBIOSName } else { $dom.Name })"
-        Scope = "Global"
-        root = "//RootDSE/"
-        PSProvider = "ActiveDirectory"
-        Server = $domDNS
+    $SchGUID = Get-ADObject @GetADObjectParameter
+    foreach ($schemaItem in $SchGUID){
+        $ObjTypeGUIDHash.Add([GUID]$schemaItem.SchemaIDGUID,$schemaItem.Name)
     }
-    if ($Credential) {
-        $driveArgs.Credential = $Credential
+    $ADObjExtPar = @{
+        SearchBase = "CN=Extended-Rights,$((Get-ADRootDSE @ADArgs).ConfigurationNamingContext)"
+        LDAPFilter = '(ObjectClass=ControlAccessRight)'
+        Properties = @("Name", "RightsGUID")
     }
-    try {
-        New-PSDrive @driveArgs @ADArgs | Out-Null
-    } catch {
-        Write-Error "Error creating PSDrive on server '$($driveArgs.Server)' with name '$($driveArgs.Name)' - $_"
-        break
-    }
-    try {
-        Set-Location "$($driveArgs.Name):" -ErrorAction Stop
-        Write-Host "Processing Domain '$($driveArgs.Name)'"
-    } catch {
-        Write-Error "Error setting current location to PSDrive - $_"
-        break
-    }
-    $scanArgs = @{
-        SearchScope = "Subtree"
-        Server = $domDNS
-    }
-    $scannedObjects = ($(if ($ObjectsToScan -contains "Groups" -or $ObjectsToScan -contains "All") {
-            @((Get-ADGroup -Filter "*" @scanArgs @ADArgs).DistinguishedName)
-        }) +
-        $(if ($ObjectsToScan -contains "OUs" -or $ObjectsToScan -contains "All") {
-            $ouFilter = 'ObjectClass -eq "organizationalunit" -or ObjectClass -eq "container"'
-            @((Get-ADObject -Filter $ouFilter @scanArgs @ADArgs).DistinguishedName) +
-            @($dom.DistinguishedName)
-        }) +
-        $(if ($ObjectsToScan -contains "Computers" -or $ObjectsToScan -contains "All") {
-            @((Get-ADComputer -Filter "*" @scanArgs @ADArgs).DistinguishedName)
-        })) |
-        Where-Object { $null -ne $_ }
-    $expectedMinutes = [mat]::Round($scannedObjects.Count/875)
-    Write-Warning -Message "BE AWARE THAT THIS PART WILL LIKELY TAKE $expectedMinutes minutes to complete!!"
-    Write-Verbose -Message ("$(Get-date -format yyyy-MM-ddTHH-mm-ss) -- Found $($scannedObjects.Count) objects in " +
-        "scan. Proceeding to obtain permissions.")
-    for ($i=0;$i -lt $scannedObjects.Count;$i+=1000) {
-        $batch = $scannedObjects[($i)..($i+999)]
-        Write-Verbose -Message "$(Get-Date -format u) -- Processing batch of $($batch.Count) objects"
-        $perms = @($batch | ForEach-Object { 
-            $dn = $_
-            $domName = if ($dom.NetBIOSName) { $dom.NetBIOSName } else { $domDNS }
-            #When using Get-ACL, backslashes used to escape special chars or spaces break the navigation
-            if ($dn -like "*\*") {
-                $dn = "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$dn"
-            }
-            try {
-                Get-Acl $dn -ErrorAction Stop |
-                    Select-Object -ExpandProperty Access |
-                    Where-Object { $_.IsInherited -eq $false} |
-                    Select-Object -Property @{N="DistinguishedName";E={$dn}},
-                        @{N="IdentityUsername";E={
-                            if ($systemSids.ContainsKey($_.IdentityReference.Value)) {
-                                "$domName\$($systemSids."$($_.IdentityReference.Value)")"
-                            } elseif ($customSids.ContainsKey($_.IdentityReference.Value)) {
-                                $customSids."$($_.IdentityReference.Value)"
-                            } elseif ($_.IdentityReference.Value -notlike "S-1-5-*" -and 
-                            $_.IdentityReference -notlike "S-1-5-*") {
-                                $_.IdentityReference
-                            } else {
-                                try {
-                                    $adoArgs = @{
-                                        Filter = "objectSid -eq '$($_.IdentityReference)'"
-                                        Properties = @("samaccountname","name")
-                                        Server = $driveArgs.Server
-                                    }
-                                    $ado = Get-ADObject @adoArgs @ADArgs
-                                    if ($null -eq $ado) {
-                                        $ado = @{SID = $_.IdentityReference; samaccountname = "UNKNOWN USER" }
-                                    }
-                                } catch {
-                                    Write-Error "Error getting ADObject using sid - $_"
-                                    throw
-                                }
-                                $ado.samaccountname
-                                $customSids.Add($ado.SID.Value,$ado.samaccountname)
-                            }
-                        }},
-                        AccessControlType,
-                        ActiveDirectoryRights,
-                        @{N="RightsToObject";E={$ObjectTypeGUID.[GUID]"$($_.ObjectType)"}},
-                        @{N="PropagatesToChildren";E={
-                            if ($_.InheritanceFlags -eq "None") { "FALSE" } else { "TRUE" }
-                        }},
-                        @{N="AppliesTo";E={
-                            if ($_.InheritanceType -eq "None") {
-                                "This Object Only"
-                            } elseif ($_.InheritanceType -eq "Children") {
-                                "Immediate Children Only and NOT This Object"
-                            } elseif ($_.InheritanceType -eq "SelfAndChildren") {
-                                "This Object and Immediate Children Only"
-                            } else { $_.InheritanceType }
-                        }},
-                        PropagationFlags
-            } catch {
-                Write-Host -ForegroundColor Red -Object "Error retrieving ACL for DN '$dn' - $_"
-                $arrRetry.Add($dn) | Out-Null
-            }
-        })
-        if ($perms.count -gt 0) {
-            $arrPerms.AddRange($perms)
+    $SchExtGUID = Get-ADObject @ADObjExtPar @ADArgs
+    foreach ($schExtItem in $SchExtGUID) {
+        $key = [GUID]$schExtItem.RightsGUID
+        if (!($ObjTypeGUIDHash.ContainsKey($key))) {
+            $ObjTypeGUIDHash.Add($key,$schExtItem.Name)
         }
     }
-    if ($arrRetry.Count -gt 0) {
-        Write-Warning -Message "Processing $($arrRetry.Count) items that failed the first attempt."
-        $retryArgs = @{
+    #Adding an entry for when an ACL has an inherited object type of all zeroes, which means all properties
+    $ObjTypeGUIDHash.Add([GUID]"00000000-0000-0000-0000-000000000000","AllProperties")
+
+    #Using Get-ADRootDSE above should trigger the loading of the AD: drive, now we can set to that for Get-ACL
+    $start = Get-date
+    $startStr = $start.ToString("yyyy-MM-ddTHH-mm-ss")
+    Write-Host "$startStr -- BEGINNING"
+    #Get the AD Forest, focus on each domain, build a PSDrive so AD calls work in that domain, use it, get all DNs
+        #of objects chosen to scan, and use the Get-ACL command to pull all ACLs on an DN. We filter for those ACLs
+        #that are not inherited, and finally format output.
+    Get-ADForest | Select-Object -ExpandProperty Domains | ForEach-Object {
+        $dom = Get-ADDomain -Identity $_ | Select-Object NetBIOSName,DNSRoot,DistinguishedName,Name
+        $domDNS = $dom.DNSRoot
+        $driveArgs = @{
+            Name = "AD$(if ($dom.NetBIOSName) { $dom.NetBIOSName } else { $dom.Name })"
+            Scope = "Global"
+            root = "//RootDSE/"
+            PSProvider = "ActiveDirectory"
             Server = $domDNS
         }
-        for ($i=0;$i -lt $arrRetry.Count;$i+=1000) {
-            $batch = $arrRetry[($i)..($i+999)]
-            Write-Verbose -Message "$(Get-Date -format u) -- Processing another batch of $($batch.Count) objects"
-            $perms = @($batch | ForEach-Object {
-                $dnFilter = $dn = $domName = $null
+        if ($Credential) {
+            $driveArgs.Credential = $Credential
+        }
+        try {
+            New-PSDrive @driveArgs @ADArgs | Out-Null
+        } catch {
+            Write-Error "Error creating PSDrive on server '$($driveArgs.Server)' with name '$($driveArgs.Name)' - $_"
+            break
+        }
+        try {
+            Set-Location "$($driveArgs.Name):" -ErrorAction Stop
+            Write-Host "Processing Domain '$($driveArgs.Name)'"
+        } catch {
+            Write-Error "Error setting current location to PSDrive - $_"
+            break
+        }
+        $scanArgs = @{
+            SearchScope = "Subtree"
+            Server = $domDNS
+        }
+        $scannedObjects = ($(if ($ObjectsToScan -contains "Groups" -or $ObjectsToScan -contains "All") {
+                @((Get-ADGroup -Filter "*" @scanArgs @ADArgs).DistinguishedName)
+            }) +
+            $(if ($ObjectsToScan -contains "OUs" -or $ObjectsToScan -contains "All") {
+                $ouFilter = 'ObjectClass -eq "organizationalunit" -or ObjectClass -eq "container"'
+                @((Get-ADObject -Filter $ouFilter @scanArgs @ADArgs).DistinguishedName) +
+                @($dom.DistinguishedName)
+            }) +
+            $(if ($ObjectsToScan -contains "Computers" -or $ObjectsToScan -contains "All") {
+                @((Get-ADComputer -Filter "*" @scanArgs @ADArgs).DistinguishedName)
+            })) |
+            Where-Object { $null -ne $_ -and $_.length -gt 1 }
+        $expectedMinutes = [Math]::Round($scannedObjects.Count/438)
+        Write-Warning -Message "BE AWARE THAT THIS PART WILL LIKELY TAKE $expectedMinutes minutes to complete!!"
+        Write-Verbose -Message ("$(Get-date -format yyyy-MM-ddTHH-mm-ss) -- Found $($scannedObjects.Count) objects " +
+            "in scan. Proceeding to obtain permissions.")
+        for ($i=0;$i -lt $scannedObjects.Count;$i+=1000) {
+            $batch = $scannedObjects[($i)..($i+999)]
+            Write-Verbose -Message "$(Get-Date -format u) -- Processing batch of $($batch.Count) objects"
+            $perms = @($batch | ForEach-Object { 
                 $dn = $_
                 $domName = if ($dom.NetBIOSName) { $dom.NetBIOSName } else { $domDNS }
-                if ($dn -match $OURegex) {
-                    try {
-                        $dnFilter = "distinguishedName -like 'CN=$($Matches.dnName),*'"
-                        $dn = (Get-ADObject -Filter $dnFilter @retryArgs @ADArgs).DistinguishedName
-                    } catch {
-                        throw "Still unable to find object dn of '$dn'"
-                    }
-                } else {
-                    throw "DN doesn't match regex. DN supplied is '$dn'"
-                }
-                #When using Get-ACL, backslashes used to escape special chars or spaces break the navigation
-                if ($dn -like "*\*") {
-                    $dn = "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$dn"
+                $GetLUACLArgs = @{
+                    dn = $dn
+                    domName = $domName
+                    systemSidsHash = $systemSidsHash
+                    customSidsHash = $customSidsHash
+                    driveArgs = $driveArgs
+                    ObjTypeGUIDHash = $ObjTypeGUIDHash
                 }
                 try {
-                    Get-Acl $dn -ErrorAction Stop |
-                        Select-Object -ExpandProperty Access |
-                        Where-Object { $_.IsInherited -eq $false} |
-                        Select-Object -Property @{N="DistinguishedName";E={$dn}},
-                            @{N="IdentityUsername";E={
-                                if ($systemSids.ContainsKey($_.IdentityReference.Value)) {
-                                    "$domName\$($systemSids."$($_.IdentityReference.Value)")"
-                                } elseif ($customSids.ContainsKey($_.IdentityReference.Value)) {
-                                    $customSids."$($_.IdentityReference.Value)"
-                                } elseif ($_.IdentityReference.Value -notlike "S-1-5-*" -and 
-                                $_.IdentityReference -notlike "S-1-5-*") {
-                                    $_.IdentityReference
-                                } else {
-                                    try {
-                                        $adoArgs = @{
-                                            Filter = "objectSid -eq '$($_.IdentityReference)'"
-                                            Properties = @("samaccountname","name")
-                                            Server = $driveArgs.Server
-                                        }
-                                        $ado = Get-ADObject @adoArgs @ADArgs
-                                        if ($null -eq $ado) {
-                                            $ado = @{SID = $_.IdentityReference; samaccountname = "UNKNOWN USER" }
-                                        }
-                                    } catch {
-                                        Write-Error "Error getting ADObject using sid - $_"
-                                        throw
-                                    }
-                                    $ado.samaccountname
-                                    $customSids.Add($ado.SID.Value,$ado.samaccountname)
-                                }
-                            }},
-                            AccessControlType,
-                            ActiveDirectoryRights,
-                            @{N="RightsToObject";E={$ObjectTypeGUID.[GUID]"$($_.ObjectType)"}},
-                            @{N="PropagatesToChildren";E={
-                                if ($_.InheritanceFlags -eq "None") { "FALSE" } else { "TRUE" }
-                            }},
-                            @{N="AppliesTo";E={
-                                if ($_.InheritanceType -eq "None") {
-                                    "This Object Only"
-                                } elseif ($_.InheritanceType -eq "Children") {
-                                    "Immediate Children Only and NOT This Object"
-                                } elseif ($_.InheritanceType -eq "SelfAndChildren") {
-                                    "This Object and Immediate Children Only"
-                                } else { $_.InheritanceType }
-                            }},
-                            PropagationFlags
+                    Get-LUACL @GetLUACLArgs -ErrorAction Stop
                 } catch {
-                    Write-Host -ForegroundColor Red -Object "Error retrieving ACL for DN '$dn' - $_"
+                    $arrRetry.Add($dn) | Out-Null
                 }
             })
-            if ($Perms.count -gt 0) {
-                $arrPerms.AddRange($Perms)
+            if ($perms.count -gt 0) {
+                $arrPerms.AddRange($perms)
             }
         }
+        if ($arrRetry.Count -gt 0) {
+            Write-Warning -Message "Processing $($arrRetry.Count) items that failed the first attempt."
+            if ($VerbosePreference -eq "Continue") {
+                Write-Warning -Message "First $(($arrRetry[0..4]).Count) items:`n$($arrRetry[0..4] -join "`n`t")"
+            }
+            $retryArgs = @{
+                Server = $domDNS
+            }
+            for ($i=0;$i -lt $arrRetry.Count;$i+=1000) {
+                $batch = $arrRetry[($i)..($i+999)]
+                Write-Verbose -Message "$(Get-Date -format u) -- Processing another batch of $($batch.Count) objects"
+                $perms = @($batch | ForEach-Object {
+                    $dnFilter = $dn = $domName = $null
+                    $dn = $_
+                    $domName = if ($dom.NetBIOSName) { $dom.NetBIOSName } else { $domDNS }
+                    #Try to remove the AD DLL reference from PSDrive stuff
+                    if ($dn -like "Microsoft.ActiveDirectory.Management.dll*") {
+                        $dn = $dn.substring(68)
+                    } elseif ($dn -like "Microsoft.ActiveDirectory.Management*") {
+                        $dn = $dn.substring(64)
+                    }
+                    if ($dn -match $OURegex) {
+                        try {
+                            $dnFilter = "name -eq '$($Matches.dnName)'"
+                            $dn = (Get-ADObject -Filter $dnFilter @retryArgs @ADArgs).DistinguishedName
+                        } catch {
+                            Write-Host -ForegroundColor Red -Object "Still unable to find object dn of '$dn'"
+                            continue
+                        }
+                    } else {
+                        Write-Host -ForegroundColor Red -Object "DN doesn't match regex. DN supplied is '$dn'"
+                        continue
+                    }
+                    $GetLUACLArgs = @{
+                        dn = $dn
+                        domName = $domName
+                        systemSidsHash = $systemSidsHash
+                        customSidsHash = $customSidsHash
+                        driveArgs = $driveArgs
+                        ObjTypeGUIDHash = $ObjTypeGUIDHash
+                    }
+                    Get-LUACL @GetLUACLArgs -DoNotRetry
+                })
+                if ($Perms.count -gt 0) {
+                    $arrPerms.AddRange($Perms)
+                }
+            }
+        }
+        Set-Location $startingPath
+        #The AD PSDrives we make should be temporary, so remove them now that we are done querying that domain
+        Remove-PSDrive $driveArgs.Name
     }
-    Set-Location $startingPath
-    #The AD PSDrives we make should be temporary, so remove them now that we are done querying that domain
-    Remove-PSDrive $driveArgs.Name
+} else {
+    $start = Get-Date
+    if ($ExistingPermsReportPath -match ".+-(?<startStr>[0-9T-]{19})\.csv$") {
+        $startStr = $Matches.startStr
+    } else {
+        Write-Warning "Invalid existing report filename submitted. Output Filename will be inaccurate."
+        $startStr = $start.ToString("yyyy-MM-ddTHH-mm-ss")
+    }
+    Write-Host "$($start.ToString("yyyy-MM-dd HH-mm-ss")) -- BEGINNING USING EXISTING CSV"
 }
 #This section will reduce the output if a user or group is supplied where we want to filter
 if ($UserOrGroup) {
     #Use an arrayList to build the list of potential entries to use to filter output
     $fullListOfFilters = New-Object -TypeName System.Collections.ArrayList
+    $allGCs = (Get-ADForest).GlobalCatalogs
+    $domDNS = $allGCs | Get-Random -Count 1
     #Most ACL output will be a username or DOMAIN\username, so get that (samaccountname)
+    Write-Verbose -Message "$(Get-Date -format u) -- Beginning to build list of entries to filter"
     foreach ($entry in $UserOrGroup) {
         try {
             $adoArgs = @{
@@ -508,13 +553,20 @@ if ($UserOrGroup) {
                 Properties = @("samaccountname")
             }
             $ado = Get-ADObject @adoArgs @ADArgs
+            if ($null -eq $ado -or $ado.Count -gt 1) {
+                if ($null -eq $ado -or $ado.samaccountname.length -eq 0) {
+                    throw "Directory object not found or zero-length samaccountname"
+                } else {
+                    throw "Multiple accounts for same samaccountname '$entry' found. Should be impossible"
+                }
+            }
         } catch {
-            Write-Error "Unable to find '$entry' when retrieving ADObject - $_"
-            throw
+            throw "Unable to find '$entry' when retrieving ADObject - $_"
         }
         $fullListOfFilters.Add($ado.samaccountname) | Out-Null
         #If we want to also show what powers an identity has based on their group memberships, this will include them
         if ($IncludeGroupMemberships) {
+            Write-Verbose -Message "$(Get-Date -format u) -- Adding groups of $($ado.samaccountname) to filter"
             if ($ado.objectClass -eq "User") {
                 $ado = Get-ADUser $ado.DistinguishedName -Server "$($domDNS):3268" @ADArgs
             } elseif ($ado.objectClass -eq "Group") {
@@ -527,33 +579,43 @@ if ($UserOrGroup) {
                 throw
             }
             if ($allGrps.count -gt 0) {
+                Write-Verbose -Message "$(Get-Date -format u) -- Found $($allGrps.Count) groups to add to filter"
                 $fullListOfFilters.AddRange($allGrps)
             }
         }
     }
-    Write-Verbose -Message "Found a total of $($fullListOfFilters.Count) entries to filter"
-    $fullListOfFilters = $fullListOfFilters | Select-Object -Unique
-    Write-Verbose -Message "Found a total of $($fullListOfFilters.Count) entries to filter after removing duplicates"
-    #The actual filtering of the permissions output
-    $arrPerms = foreach ($entry in $fullListOfFilters) {
-        $arrPerms | Where-Object { $_.IdentityUsername -like "*\$entry" -or $_.IdentityUsername -eq $entry }
+    Write-Verbose -Message "$(Get-Date -format u) -- Found a total of $($fullListOfFilters.Count) entries to filter"
+    if ($fullListOfFilters.Count -gt 1) {
+        $fullListOfFilters = $fullListOfFilters | Select-Object -Unique
     }
+    Write-Verbose -Message "$(Get-Date -format u) -- Found a total of $($fullListOfFilters.Count) entries to filter after removing duplicates"
+    #The actual filtering of the permissions output
+    Write-Host "$(Get-Date -format u) -- Extracting filtered perms from full set of perms"
+    $arrPermsFiltered = @(foreach ($entry in $fullListOfFilters) {
+        $arrPerms | Where-Object { $_.IdentityUsername -like "*\$entry" -or $_.IdentityUsername -eq $entry }
+    })
+    Write-Host -Message "$(Get-Date -format u) -- Completed, beginning output to file"
     #Change the output filename to indicate Filtered, Filtered including groups, otherwise defaults to ALL
     if ($IncludeGroupMemberships) {
-        $outputFileName = "ADPerms-Fltrd-$($ObjectsToScan -join "-")-InclMbrshp-$startStr.csv"
+        $outputFileName = "ADPerms-Fltrd-$UserOrGroup-$($ObjectsToScan -join "-") Objects-InclMbrshp-$startStr.csv"
     } else {
-        $outputFileName = "ADPerms-Fltrd-$($ObjectsToScan -join "-")-$startStr.csv"
+        $outputFileName = "ADPerms-Fltrd-$UserOrGroup-$($ObjectsToScan -join "-") Objects-$startStr.csv"
     }
-} else {
-    $outputFileName = "ADPerms-ALL-$($ObjectsToScan -join "-")-$startStr.csv"
 }
 #Actually output the permissions to a CSV at the supplied path and calculated output filename
-if ($arrPerms.count -gt 0){
-    $arrPerms | Export-CSV "$ReportOutputFolderPath\$outputFileName" -NoTypeInformation -Append
-    Write-Host "CSV Exported to '$ReportOutputFolderPath\$outputFileName'"
+if ($arrPerms.count -gt 0 -or $arrPermsFiltered.Count -gt 0) {
+    if ($UserOrGroup -and $arrPermsFiltered.Count -gt 0) {
+        $arrPermsFiltered | Export-CSV "$ReportOutputFolderPath\$outputFileName" -NoTypeInformation -Append
+        Write-Host "$(Get-Date -format u) -- CSV Exported to '$ReportOutputFolderPath\$outputFileName'"
+    }
+    if (!$OutputFilteredReportOnly) {
+        $outputFullFileName = "ADPerms-ALL-$($ObjectsToScan -join "-") Objects-$startStr.csv"
+        $arrPerms | Export-CSV "$ReportOutputFolderPath\$outputFullFileName" -NoTypeInformation -Append
+        Write-Host "$(Get-Date -format u) -- CSV Exported to '$ReportOutputFolderPath\$outputFullFileName'"
+    }
 } else {
     Write-Host "NO PERMISSIONS FOUND USING CURRENT PARAMETERS"
 }
 $end = Get-Date
 $totalElapsed = [math]::Round($(($end - $start).TotalMinutes))
-Write-Host "$(Get-date -format yyyy-MM-ddTHH-mm-ss) -- DONE. Took a total of $totalElapsed minutes"
+Write-Host "$(Get-Date -format u) -- DONE. Took a total of $totalElapsed minutes"
