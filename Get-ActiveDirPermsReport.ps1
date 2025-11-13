@@ -28,6 +28,7 @@ OPTIONAL - If you have already generated a full output, provide the path to the 
     Created By: Brendan Horner (MIT)
     Credit: https://devblogs.microsoft.com/powershell-community/understanding-get-acl-and-ad-drive-output/
     Version History
+    --2025-11-13-Added verbose output, handled existing PSDrives from failed script runs, CSV validation added
     --2025-06-04-Some code refactor
     --2025-05-19-Added option to use the local ADPerms-ALL output CSV to avoid re-querying all of AD
     --2025-04-16-Attempting to simply log those OUs with backslashes that break things instead of failing
@@ -322,7 +323,7 @@ $ADArgs = @{
 }
 $outputFileName = ""
 if ($ReportOutputFolderPath -like "*\") {
-    $ReportOutputFolderPath = $ReportOutputFolderPath.Substring(0,$ReportOutputFolderPath.Length)
+    $ReportOutputFolderPath = $ReportOutputFolderPath.TrimEnd("\")
 }
 #This is a list of commonly-known sids that exist in Active Directory in each Domain for faster lookup.
 $systemSidsHash = @{
@@ -362,6 +363,11 @@ if ($ExistingPermsReportPath -and (Test-Path $ExistingPermsReportPath) -and $Exi
     Write-Verbose -Message "$(Get-date -format u) -- Importing perms CSV"
     $arrPerms = Import-CSV $ExistingPermsReportPath
     Write-Verbose -Message "$(Get-date -format u) -- Done"
+    if (!($arrPerms[0].DistinguishedName -and $arrPerms[0].IdentityUsername -and $arrPerms[0].AccessControlType -and
+    $arrPerms[0].ActiveDirectoryRights -and $arrPerms[0].RightsToObject -and $arrPerms[0].PropagatesToChildren -and
+    $arrPerms[0].AppliesTo -and $arrPerms[0].PropagationFlags)) {
+        Write-Host "Invalid CSV supplied to script. Please triple check the CSV you gave wasn't for another process"
+    }
     $OutputFilteredReportOnly = $true
 } else {
     $arrPerms = New-Object -TypeName System.Collections.ArrayList
@@ -421,8 +427,12 @@ if ($arrPerms.Count -eq 0) {
         try {
             New-PSDrive @driveArgs @ADArgs | Out-Null
         } catch {
-            Write-Error "Error creating PSDrive on server '$($driveArgs.Server)' with name '$($driveArgs.Name)' - $_"
-            break
+            if ($_.Exception.Message -notlike "*drive with the name*already exists*") {
+                Write-Error "Error creating PSDrive on '$($driveArgs.Server)' with name '$($driveArgs.Name)' - $_"
+                break
+            } else {
+                Write-Host -ForegroundColor Yellow "PSDrive '$($driveArgs.Name)' exists, attempting to use it"
+            }
         }
         try {
             Set-Location "$($driveArgs.Name):" -ErrorAction Stop
@@ -535,7 +545,7 @@ if ($arrPerms.Count -eq 0) {
         Write-Warning "Invalid existing report filename submitted. Output Filename will be inaccurate."
         $startStr = $start.ToString("yyyy-MM-ddTHH-mm-ss")
     }
-    Write-Host "$($start.ToString("yyyy-MM-dd HH-mm-ss")) -- BEGINNING USING EXISTING CSV"
+    Write-Host "$($start.ToString("yyyy-MM-dd HH:mm:ssZ")) -- BEGINNING USING EXISTING CSV"
 }
 #This section will reduce the output if a user or group is supplied where we want to filter
 if ($UserOrGroup) {
@@ -588,7 +598,8 @@ if ($UserOrGroup) {
     if ($fullListOfFilters.Count -gt 1) {
         $fullListOfFilters = $fullListOfFilters | Select-Object -Unique
     }
-    Write-Verbose -Message "$(Get-Date -format u) -- Found a total of $($fullListOfFilters.Count) entries to filter after removing duplicates"
+    Write-Verbose -Message ("$(Get-Date -format u) -- Found a total of $($fullListOfFilters.Count) entries to " +
+        "filter after removing duplicates. First 3:`n--$($fullListOfFilters[0..2] -join "`n--")")
     #The actual filtering of the permissions output
     Write-Host "$(Get-Date -format u) -- Extracting filtered perms from full set of perms"
     $arrPermsFiltered = @(foreach ($entry in $fullListOfFilters) {
@@ -601,20 +612,22 @@ if ($UserOrGroup) {
     } else {
         $outputFileName = "ADPerms-Fltrd-$UserOrGroup-$($ObjectsToScan -join "-") Objects-$startStr.csv"
     }
+    Write-Verbose -Message "Output filename will be '$ReportOutputFolderPath\$outputFileName'"
 }
 #Actually output the permissions to a CSV at the supplied path and calculated output filename
+Write-Verbose "All perms found: $($arrPerms.Count). Filtered perms found: $($arrPermsFiltered.Count)"
 if ($arrPerms.count -gt 0 -or $arrPermsFiltered.Count -gt 0) {
     if ($UserOrGroup -and $arrPermsFiltered.Count -gt 0) {
         $arrPermsFiltered | Export-CSV "$ReportOutputFolderPath\$outputFileName" -NoTypeInformation -Append
         Write-Host "$(Get-Date -format u) -- CSV Exported to '$ReportOutputFolderPath\$outputFileName'"
-    }
-    if (!$OutputFilteredReportOnly) {
+    } elseif ($UserOrGroup) { Write-Host "$(Get-Date -format u) -- NO PERMISSIONS FOUND FOR $UserOrGroup" }
+    if (!$OutputFilteredReportOnly -and !$ExistingPermsReportPath) {
         $outputFullFileName = "ADPerms-ALL-$($ObjectsToScan -join "-") Objects-$startStr.csv"
         $arrPerms | Export-CSV "$ReportOutputFolderPath\$outputFullFileName" -NoTypeInformation -Append
         Write-Host "$(Get-Date -format u) -- CSV Exported to '$ReportOutputFolderPath\$outputFullFileName'"
     }
 } else {
-    Write-Host "NO PERMISSIONS FOUND USING CURRENT PARAMETERS"
+    Write-Host "$(Get-Date -format u) -- NO PERMISSIONS FOUND USING CURRENT PARAMETERS"
 }
 $end = Get-Date
 $totalElapsed = [math]::Round($(($end - $start).TotalMinutes))
